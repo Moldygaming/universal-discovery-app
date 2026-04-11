@@ -4,6 +4,7 @@ boto3==1.40.0
 botocore==1.40.0
 azure-identity==1.23.0
 azure-mgmt-resource==23.3.0
+azure-mgmt-storage==22.2.0
 azure-keyvault-secrets==4.10.0
 pysnmp==7.1.17
 python-dotenv==1.1.1

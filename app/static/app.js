@@ -1102,16 +1102,72 @@ async function refreshInventory(provider, itemType, search) {
     return;
   }
 
+  const hiddenAttributeKeys = new Set([
+    "id",
+    "name",
+    "type",
+    "location",
+    "properties",
+  ]);
+
+  const prioritizedAttributeKeys = [
+    "resource_group",
+    "subscription_id",
+    "api_version",
+    "property_provisioningState",
+    "identity_type",
+    "principal_id",
+    "tenant_id",
+    "managed_by",
+    "access_tier",
+    "replication_type",
+    "sku_name",
+    "sku_tier",
+    "sku_size",
+    "sku_family",
+    "sku_capacity",
+    "storage_sku_name",
+    "storage_sku_tier",
+    "resource_kind",
+    "kind",
+    "zones",
+    "extended_location",
+    "is_hns_enabled",
+    "minimum_tls_version",
+    "https_only",
+    "public_network_access",
+    "allow_blob_public_access",
+    "primary_location",
+    "secondary_location",
+    "status_of_primary",
+    "status_of_secondary",
+  ];
+
   const attributeKeys = Array.from(
     new Set(
       items.flatMap((item) => {
         if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
           return [];
         }
-        return Object.keys(item.attributes);
+        return Object.keys(item.attributes).filter((key) => !hiddenAttributeKeys.has(key));
       }),
     ),
-  ).sort((left, right) => left.localeCompare(right));
+  ).sort((left, right) => {
+    const leftPriority = prioritizedAttributeKeys.indexOf(left);
+    const rightPriority = prioritizedAttributeKeys.indexOf(right);
+
+    if (leftPriority >= 0 || rightPriority >= 0) {
+      if (leftPriority < 0) {
+        return 1;
+      }
+      if (rightPriority < 0) {
+        return -1;
+      }
+      return leftPriority - rightPriority;
+    }
+
+    return left.localeCompare(right);
+  });
 
   const columns = [
     ...baseColumns,
