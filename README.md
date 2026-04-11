@@ -4,6 +4,7 @@ Server-based discovery platform designed as a replacement path from OpenText UCM
 
 ## Current Capability Set
 
+- Burger-menu navigation in the top-right corner for all primary views
 - Scheduled scan profiles created in the GUI
 - Persistent storage of scan runs and discovered inventory items
 - Inventory and service-model views in the GUI
@@ -15,6 +16,9 @@ Server-based discovery platform designed as a replacement path from OpenText UCM
   - Azure Key Vault references
   - AWS Secrets Manager references
   - Environment variable references (local/dev)
+- Cloud account configuration in GUI:
+  - Multiple Azure tenant configs
+  - Reusable secret reference catalog
 
 Discovery types currently supported:
 
@@ -161,6 +165,18 @@ In Admin Console, use the **Secret Reference Builder**:
 6. Save the profile.
 
 This inserts a `$secret` reference into `Config JSON` automatically.
+
+### Azure Tenant Setup Window (GUI)
+
+In Admin Console:
+
+1. Open `Cloud Accounts`.
+2. Create secret references in `Add Secret Reference` window.
+3. Click `Configure Azure Tenant`.
+4. Enter `Tenant ID`, `Client ID`, and choose `Client Secret Reference` from dropdown.
+5. Save and optionally click `Use In Profile` to insert `tenant_config_id` into an Azure scan profile.
+
+This provides multi-tenant Azure discovery without embedding client secrets in profile JSON.
 
 ### Azure Key Vault permissions
 

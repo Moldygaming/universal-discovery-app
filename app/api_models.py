@@ -86,3 +86,90 @@ class InventoryItemOut(BaseModel):
     parent_key: str | None
     attributes: dict[str, Any]
     discovered_at: datetime
+
+
+class SecretReferenceCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=180)
+    reference: dict[str, Any]
+
+
+class SecretReferenceOut(BaseModel):
+    id: int
+    name: str
+    provider: str
+    reference: dict[str, Any]
+
+
+class SecretReferenceUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    reference: dict[str, Any] | None = None
+
+
+class AzureTenantCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=180)
+    tenant_id: str = Field(..., min_length=3, max_length=180)
+    client_id: str = Field(..., min_length=3, max_length=180)
+    client_secret_ref_id: int | None = None
+    client_secret: SecretStr | None = None
+    subscription_ids: list[str] | None = None
+    is_active: bool = True
+
+
+class AzureTenantUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    tenant_id: str | None = Field(default=None, min_length=3, max_length=180)
+    client_id: str | None = Field(default=None, min_length=3, max_length=180)
+    client_secret_ref_id: int | None = None
+    client_secret: SecretStr | None = None
+    subscription_ids: list[str] | None = None
+    is_active: bool | None = None
+
+
+class AzureTenantOut(BaseModel):
+    id: int
+    name: str
+    tenant_id: str
+    client_id: str
+    client_secret_ref_id: int | None
+    client_secret_ref_name: str | None
+    client_secret_source: Literal["reference", "encrypted"]
+    subscription_ids: list[str] | None
+    is_active: bool
+
+
+class AzureTenantCreateProfileRequest(BaseModel):
+    profile_name: str | None = Field(default=None, min_length=3, max_length=150)
+    schedule_minutes: int = Field(default=60, ge=1, le=10080)
+    is_enabled: bool = True
+    max_resources_per_subscription: int = Field(default=2000, ge=1, le=50000)
+
+
+class AwsAccountCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=180)
+    access_key_ref_id: int
+    secret_access_key_ref_id: int
+    session_token_ref_id: int | None = None
+    regions: list[str] | None = None
+    is_active: bool = True
+
+
+class AwsAccountUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    access_key_ref_id: int | None = None
+    secret_access_key_ref_id: int | None = None
+    session_token_ref_id: int | None = None
+    regions: list[str] | None = None
+    is_active: bool | None = None
+
+
+class AwsAccountOut(BaseModel):
+    id: int
+    name: str
+    access_key_ref_id: int
+    access_key_ref_name: str
+    secret_access_key_ref_id: int
+    secret_access_key_ref_name: str
+    session_token_ref_id: int | None
+    session_token_ref_name: str | None
+    regions: list[str] | None
+    is_active: bool

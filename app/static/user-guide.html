@@ -51,7 +51,8 @@
       <div class="card">
         <h2>2. Inventory View</h2>
         <p>
-          Open the <strong>Inventory</strong> tab to review recent scan runs and discovered configuration items.
+          Use the top-right burger menu and open <strong>Inventory</strong> to review recent scan runs and
+          discovered configuration items.
           You can filter by provider, item type, or free-text search.
         </p>
       </div>
@@ -69,13 +70,25 @@
         <p>Admins can:</p>
         <ul>
           <li>Create scan profiles with scan type, schedule interval, and JSON config.</li>
+          <li>Edit existing scan profiles directly from the profile list.</li>
           <li>Run scan profiles on demand.</li>
           <li>Create local and Entra-linked users.</li>
+          <li>Configure multiple Azure tenant accounts.</li>
+          <li>Create reusable secret references and assign them from dropdowns.</li>
         </ul>
       </div>
 
       <div class="card">
-        <h2>5. Scan Configuration JSON Examples</h2>
+        <h2>5. Azure Tenant Configuration</h2>
+        <p>
+          In Admin Console, open <strong>Cloud Accounts</strong> and click <strong>Configure Azure Tenant</strong>.
+          The window prompts for tenant name, tenant ID, client ID, and a <strong>Client Secret Reference</strong>
+          selected from a dropdown.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>6. Scan Configuration JSON Examples</h2>
         <p>ICMP profile config:</p>
         <p><code>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</code></p>
         <p>SNMP profile config:</p>
@@ -87,7 +100,7 @@
       </div>
 
       <div class="card">
-        <h2>6. Secret Provider Reference Formats</h2>
+        <h2>7. Secret Provider Reference Formats</h2>
         <p>Environment variable provider:</p>
         <p><code>{"$secret":{"provider":"env","key":"MY_SECRET"}}</code></p>
         <p>Azure Key Vault provider:</p>
@@ -101,7 +114,7 @@
       </div>
 
       <div class="card">
-        <h2>7. Security Notes</h2>
+        <h2>8. Security Notes</h2>
         <p>
           Keep production credentials in a secure secret store and avoid embedding long-lived secrets directly in
           profile JSON. Configure HTTPS and rotate app credentials regularly.

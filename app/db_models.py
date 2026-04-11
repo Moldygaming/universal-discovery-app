@@ -53,6 +53,52 @@ class ScanRun(Base):
     profile: Mapped[ScanProfile] = relationship("ScanProfile")
 
 
+class SecretReference(Base):
+    __tablename__ = "secret_references"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(60), nullable=False)
+    reference_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AzureTenantConfig(Base):
+    __tablename__ = "azure_tenant_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    client_secret_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
+    subscription_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    client_secret_ref: Mapped[SecretReference] = relationship("SecretReference")
+
+
+class AwsAccountConfig(Base):
+    __tablename__ = "aws_account_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    access_key_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
+    secret_access_key_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
+    session_token_ref_id: Mapped[int | None] = mapped_column(ForeignKey("secret_references.id"), nullable=True)
+    regions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    access_key_ref: Mapped[SecretReference] = relationship("SecretReference", foreign_keys=[access_key_ref_id])
+    secret_access_key_ref: Mapped[SecretReference] = relationship(
+        "SecretReference", foreign_keys=[secret_access_key_ref_id]
+    )
+    session_token_ref: Mapped[SecretReference | None] = relationship(
+        "SecretReference", foreign_keys=[session_token_ref_id]
+    )
+
+
 class InventoryItem(Base):
     __tablename__ = "inventory_items"
 

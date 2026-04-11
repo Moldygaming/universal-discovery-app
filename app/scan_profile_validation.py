@@ -10,7 +10,7 @@ class ScanProfileValidationError(ValueError):
 _REQUIRED_FIELDS_BY_SCAN_TYPE: dict[str, tuple[str, ...]] = {
     "icmp": ("target",),
     "snmp": ("target",),
-    "azure": ("tenant_id", "client_id"),
+    "azure": (),
     "aws": ("access_key_id",),
 }
 
@@ -27,8 +27,22 @@ def _is_blank(value: Any) -> bool:
 
 
 def validate_scan_profile_config(scan_type: str, config: dict[str, Any]) -> None:
+    if scan_type == "azure":
+        tenant_config_id = config.get("tenant_config_id")
+        if tenant_config_id is None:
+            for key in ("tenant_id", "client_id"):
+                if _is_blank(config.get(key)):
+                    raise ScanProfileValidationError(f"Missing required config field for azure: {key}")
+
+    if scan_type == "aws":
+        aws_account_id = config.get("aws_account_id")
+        if aws_account_id is None and _is_blank(config.get("access_key_id")):
+            raise ScanProfileValidationError("Missing required config field for aws: access_key_id or aws_account_id")
+
     required = _REQUIRED_FIELDS_BY_SCAN_TYPE.get(scan_type, ())
     for key in required:
+        if scan_type == "aws" and key == "access_key_id" and config.get("aws_account_id") is not None:
+            continue
         if _is_blank(config.get(key)):
             raise ScanProfileValidationError(f"Missing required config field for {scan_type}: {key}")
 

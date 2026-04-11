@@ -2,6 +2,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+import time
 from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuth
@@ -14,6 +15,13 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api_models import (
+    AwsAccountCreateRequest,
+    AwsAccountOut,
+    AwsAccountUpdateRequest,
+    AzureTenantCreateProfileRequest,
+    AzureTenantCreateRequest,
+    AzureTenantOut,
+    AzureTenantUpdateRequest,
     BootstrapAdminRequest,
     ChangePasswordRequest,
     InventoryItemOut,
@@ -22,15 +30,20 @@ from app.api_models import (
     ScanProfileOut,
     ScanProfileUpdateRequest,
     ScanRunOut,
+    SecretReferenceCreateRequest,
+    SecretReferenceOut,
+    SecretReferenceUpdateRequest,
     UserCreateRequest,
     UserOut,
 )
 from app.config import settings
 from app.database import Base, SessionLocal, apply_runtime_schema_patches, engine, get_db_session
-from app.db_models import InventoryItem, ScanProfile, ScanRun, User
+from app.db_models import AwsAccountConfig, AzureTenantConfig, InventoryItem, ScanProfile, ScanRun, SecretReference, User
 from app.discovery_runtime import execute_and_persist_scan, mask_sensitive_config
 from app.scan_profile_validation import ScanProfileValidationError, validate_scan_profile_config
 from app.scheduler_runtime import discovery_scheduler
+from app.secrets.provider import SecretResolutionError, validate_secret_reference
+from app.secrets.provider import build_local_encrypted_secret_reference
 from app.security import AuthError, create_access_token, hash_password, verify_password, decode_access_token
 
 Base.metadata.create_all(bind=engine)
@@ -49,9 +62,10 @@ if settings.entra_enabled and settings.entra_tenant_id and settings.entra_client
     )
 
 security = HTTPBearer(auto_error=False)
+INTERNAL_AZURE_SECRET_REF_PREFIX = "__internal_azure_"
 
 
-def _to_json(raw: str | None) -> dict:
+def _to_json(raw: str | None):
     if not raw:
         return {}
     return json.loads(raw)
@@ -108,6 +122,92 @@ def _inventory_out(item: InventoryItem) -> InventoryItemOut:
         parent_key=item.parent_key,
         attributes=_to_json(item.attributes_json),
         discovered_at=item.discovered_at,
+    )
+
+
+def _secret_reference_out(secret_ref: SecretReference) -> SecretReferenceOut:
+    return SecretReferenceOut(
+        id=secret_ref.id,
+        name=secret_ref.name,
+        provider=secret_ref.provider,
+        reference=_to_json(secret_ref.reference_json),
+    )
+
+
+def _azure_tenant_out(tenant: AzureTenantConfig) -> AzureTenantOut:
+    subscriptions = _to_json(tenant.subscription_ids_json) if tenant.subscription_ids_json else None
+    if subscriptions is not None and not isinstance(subscriptions, list):
+        subscriptions = None
+
+    secret_ref_name = tenant.client_secret_ref.name if tenant.client_secret_ref else None
+    secret_source = "reference"
+    if secret_ref_name and secret_ref_name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX):
+        secret_ref_name = "Stored Encrypted (local)"
+        secret_source = "encrypted"
+
+    return AzureTenantOut(
+        id=tenant.id,
+        name=tenant.name,
+        tenant_id=tenant.tenant_id,
+        client_id=tenant.client_id,
+        client_secret_ref_id=tenant.client_secret_ref_id,
+        client_secret_ref_name=secret_ref_name,
+        client_secret_source=secret_source,
+        subscription_ids=subscriptions,
+        is_active=tenant.is_active,
+    )
+
+
+def _is_internal_azure_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return bool(secret_ref and secret_ref.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX))
+
+
+def _create_internal_azure_secret_ref(db: Session, tenant_name: str, client_secret: str) -> SecretReference:
+    name = f"{INTERNAL_AZURE_SECRET_REF_PREFIX}{tenant_name}-{int(time.time() * 1000)}"
+    reference = build_local_encrypted_secret_reference(client_secret)
+    parsed = validate_secret_reference(reference)
+
+    secret_ref = SecretReference(
+        name=name,
+        provider=parsed.provider,
+        reference_json=json.dumps(reference),
+    )
+    db.add(secret_ref)
+    db.flush()
+    return secret_ref
+
+
+def _cleanup_orphaned_internal_azure_secret_ref(db: Session, secret_ref_id: int | None) -> None:
+    if not secret_ref_id:
+        return
+
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == secret_ref_id).first()
+    if not _is_internal_azure_secret_ref(secret_ref):
+        return
+
+    still_used = db.query(AzureTenantConfig).filter(AzureTenantConfig.client_secret_ref_id == secret_ref_id).first()
+    if still_used is not None:
+        return
+
+    db.delete(secret_ref)
+
+
+def _aws_account_out(account: AwsAccountConfig) -> AwsAccountOut:
+    regions = _to_json(account.regions_json) if account.regions_json else None
+    if regions is not None and not isinstance(regions, list):
+        regions = None
+
+    return AwsAccountOut(
+        id=account.id,
+        name=account.name,
+        access_key_ref_id=account.access_key_ref_id,
+        access_key_ref_name=account.access_key_ref.name if account.access_key_ref else "unknown",
+        secret_access_key_ref_id=account.secret_access_key_ref_id,
+        secret_access_key_ref_name=account.secret_access_key_ref.name if account.secret_access_key_ref else "unknown",
+        session_token_ref_id=account.session_token_ref_id,
+        session_token_ref_name=account.session_token_ref.name if account.session_token_ref else None,
+        regions=regions,
+        is_active=account.is_active,
     )
 
 
@@ -354,6 +454,369 @@ async def update_user_role(user_id: int, role: str = Query(..., pattern="^(admin
     db.commit()
     db.refresh(user)
     return _user_out(user)
+
+
+@app.get("/api/admin/secret-references")
+async def list_secret_references(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+    refs = (
+        db.query(SecretReference)
+        .filter(~SecretReference.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX))
+        .order_by(SecretReference.name.asc())
+        .all()
+    )
+    return [_secret_reference_out(secret_ref) for secret_ref in refs]
+
+
+@app.post("/api/admin/secret-references")
+async def create_secret_reference(
+    payload: SecretReferenceCreateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX):
+        raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
+
+    if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Secret reference name already exists")
+
+    try:
+        parsed = validate_secret_reference(payload.reference)
+    except SecretResolutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    secret_ref = SecretReference(
+        name=payload.name,
+        provider=parsed.provider,
+        reference_json=json.dumps(payload.reference),
+    )
+    db.add(secret_ref)
+    db.commit()
+    db.refresh(secret_ref)
+    return _secret_reference_out(secret_ref)
+
+
+@app.put("/api/admin/secret-references/{reference_id}")
+async def update_secret_reference(
+    reference_id: int,
+    payload: SecretReferenceUpdateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == reference_id).first()
+    if not secret_ref:
+        raise HTTPException(status_code=404, detail="Secret reference not found")
+
+    if _is_internal_azure_secret_ref(secret_ref):
+        raise HTTPException(status_code=403, detail="Internal secret references cannot be modified")
+
+    if payload.name is not None and payload.name != secret_ref.name:
+        if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX):
+            raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
+        if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
+            raise HTTPException(status_code=409, detail="Secret reference name already exists")
+        secret_ref.name = payload.name
+
+    if payload.reference is not None:
+        try:
+            parsed = validate_secret_reference(payload.reference)
+        except SecretResolutionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        secret_ref.provider = parsed.provider
+        secret_ref.reference_json = json.dumps(payload.reference)
+
+    db.commit()
+    db.refresh(secret_ref)
+    return _secret_reference_out(secret_ref)
+
+
+@app.delete("/api/admin/secret-references/{reference_id}")
+async def delete_secret_reference(
+    reference_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == reference_id).first()
+    if not secret_ref:
+        raise HTTPException(status_code=404, detail="Secret reference not found")
+
+    if _is_internal_azure_secret_ref(secret_ref):
+        raise HTTPException(status_code=403, detail="Internal secret references cannot be deleted directly")
+
+    in_use = (
+        db.query(AzureTenantConfig).filter(AzureTenantConfig.client_secret_ref_id == reference_id).first() is not None
+        or db.query(AwsAccountConfig).filter(AwsAccountConfig.access_key_ref_id == reference_id).first() is not None
+        or db.query(AwsAccountConfig).filter(AwsAccountConfig.secret_access_key_ref_id == reference_id).first() is not None
+        or db.query(AwsAccountConfig).filter(AwsAccountConfig.session_token_ref_id == reference_id).first() is not None
+    )
+    if in_use:
+        raise HTTPException(status_code=409, detail="Secret reference is in use by cloud account configuration")
+
+    db.delete(secret_ref)
+    db.commit()
+    return {"message": "Secret reference deleted"}
+
+
+@app.get("/api/admin/azure-tenants")
+async def list_azure_tenants(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+    tenants = db.query(AzureTenantConfig).order_by(AzureTenantConfig.name.asc()).all()
+    return [_azure_tenant_out(tenant) for tenant in tenants]
+
+
+@app.post("/api/admin/azure-tenants")
+async def create_azure_tenant(
+    payload: AzureTenantCreateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    if db.query(AzureTenantConfig).filter(AzureTenantConfig.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Azure tenant name already exists")
+
+    secret_ref_id = payload.client_secret_ref_id
+    inline_secret = payload.client_secret.get_secret_value().strip() if payload.client_secret else ""
+    if secret_ref_id is not None and inline_secret:
+        raise HTTPException(status_code=400, detail="Provide either client_secret_ref_id or client_secret, not both")
+
+    if secret_ref_id is not None:
+        secret_ref = db.query(SecretReference).filter(SecretReference.id == secret_ref_id).first()
+        if not secret_ref:
+            raise HTTPException(status_code=404, detail="Secret reference not found")
+    elif inline_secret:
+        secret_ref = _create_internal_azure_secret_ref(db, payload.name, inline_secret)
+        secret_ref_id = secret_ref.id
+    else:
+        raise HTTPException(status_code=400, detail="Either client_secret_ref_id or client_secret is required")
+
+    tenant = AzureTenantConfig(
+        name=payload.name,
+        tenant_id=payload.tenant_id,
+        client_id=payload.client_id,
+        client_secret_ref_id=secret_ref_id,
+        subscription_ids_json=json.dumps(payload.subscription_ids) if payload.subscription_ids is not None else None,
+        is_active=payload.is_active,
+    )
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    return _azure_tenant_out(tenant)
+
+
+@app.put("/api/admin/azure-tenants/{tenant_id}")
+async def update_azure_tenant(
+    tenant_id: int,
+    payload: AzureTenantUpdateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    tenant = db.query(AzureTenantConfig).filter(AzureTenantConfig.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Azure tenant not found")
+
+    old_secret_ref_id = tenant.client_secret_ref_id
+    new_secret_ref_id: int | None = None
+
+    if payload.name is not None:
+        tenant.name = payload.name
+    if payload.tenant_id is not None:
+        tenant.tenant_id = payload.tenant_id
+    if payload.client_id is not None:
+        tenant.client_id = payload.client_id
+    inline_secret = payload.client_secret.get_secret_value().strip() if payload.client_secret else ""
+    if payload.client_secret_ref_id is not None and inline_secret:
+        raise HTTPException(status_code=400, detail="Provide either client_secret_ref_id or client_secret, not both")
+
+    if payload.client_secret_ref_id is not None:
+        secret_ref = db.query(SecretReference).filter(SecretReference.id == payload.client_secret_ref_id).first()
+        if not secret_ref:
+            raise HTTPException(status_code=404, detail="Secret reference not found")
+        new_secret_ref_id = payload.client_secret_ref_id
+
+    if inline_secret:
+        secret_ref = _create_internal_azure_secret_ref(db, tenant.name, inline_secret)
+        new_secret_ref_id = secret_ref.id
+
+    if new_secret_ref_id is not None:
+        tenant.client_secret_ref_id = new_secret_ref_id
+    if "subscription_ids" in payload.model_fields_set:
+        tenant.subscription_ids_json = json.dumps(payload.subscription_ids) if payload.subscription_ids is not None else None
+    if payload.is_active is not None:
+        tenant.is_active = payload.is_active
+
+    db.commit()
+
+    if new_secret_ref_id is not None and old_secret_ref_id != new_secret_ref_id:
+        _cleanup_orphaned_internal_azure_secret_ref(db, old_secret_ref_id)
+        db.commit()
+
+    db.refresh(tenant)
+    return _azure_tenant_out(tenant)
+
+
+@app.delete("/api/admin/azure-tenants/{tenant_id}")
+async def delete_azure_tenant(
+    tenant_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    tenant = db.query(AzureTenantConfig).filter(AzureTenantConfig.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Azure tenant not found")
+
+    if db.query(ScanProfile).filter(ScanProfile.scan_type == "azure", ScanProfile.config_json.like(f'%"tenant_config_id": {tenant_id}%')).first():
+        raise HTTPException(status_code=409, detail="Azure tenant is in use by scan profiles")
+
+    old_secret_ref_id = tenant.client_secret_ref_id
+    db.delete(tenant)
+    db.commit()
+    _cleanup_orphaned_internal_azure_secret_ref(db, old_secret_ref_id)
+    db.commit()
+    return {"message": "Azure tenant deleted"}
+
+
+@app.post("/api/admin/azure-tenants/{tenant_id}/create-profile")
+async def create_profile_from_azure_tenant(
+    tenant_id: int,
+    payload: AzureTenantCreateProfileRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    tenant = db.query(AzureTenantConfig).filter(AzureTenantConfig.id == tenant_id).first()
+    if not tenant or not tenant.is_active:
+        raise HTTPException(status_code=404, detail="Azure tenant not found or inactive")
+
+    base_name = payload.profile_name.strip() if payload.profile_name else f"azure-{tenant.name}-profile"
+    candidate_name = base_name
+    suffix = 2
+    while db.query(ScanProfile).filter(ScanProfile.name == candidate_name).first():
+        candidate_name = f"{base_name}-{suffix}"
+        suffix += 1
+
+    profile_config = {
+        "tenant_config_id": tenant.id,
+        "max_resources_per_subscription": payload.max_resources_per_subscription,
+    }
+    try:
+        validate_scan_profile_config("azure", profile_config)
+    except ScanProfileValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    profile = ScanProfile(
+        name=candidate_name,
+        scan_type="azure",
+        schedule_minutes=payload.schedule_minutes,
+        is_enabled=payload.is_enabled,
+        config_json=json.dumps(profile_config),
+        created_by_user_id=current_user.id,
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    discovery_scheduler.sync_jobs()
+    return _profile_out(profile)
+
+
+@app.get("/api/admin/aws-accounts")
+async def list_aws_accounts(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+    accounts = db.query(AwsAccountConfig).order_by(AwsAccountConfig.name.asc()).all()
+    return [_aws_account_out(account) for account in accounts]
+
+
+@app.post("/api/admin/aws-accounts")
+async def create_aws_account(
+    payload: AwsAccountCreateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    if db.query(AwsAccountConfig).filter(AwsAccountConfig.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="AWS account name already exists")
+
+    access_key_ref = db.query(SecretReference).filter(SecretReference.id == payload.access_key_ref_id).first()
+    secret_access_key_ref = db.query(SecretReference).filter(SecretReference.id == payload.secret_access_key_ref_id).first()
+    if not access_key_ref or not secret_access_key_ref:
+        raise HTTPException(status_code=404, detail="Referenced secret not found")
+
+    session_token_ref = None
+    if payload.session_token_ref_id is not None:
+        session_token_ref = db.query(SecretReference).filter(SecretReference.id == payload.session_token_ref_id).first()
+        if not session_token_ref:
+            raise HTTPException(status_code=404, detail="Session token secret reference not found")
+
+    account = AwsAccountConfig(
+        name=payload.name,
+        access_key_ref_id=payload.access_key_ref_id,
+        secret_access_key_ref_id=payload.secret_access_key_ref_id,
+        session_token_ref_id=payload.session_token_ref_id,
+        regions_json=json.dumps(payload.regions) if payload.regions is not None else None,
+        is_active=payload.is_active,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _aws_account_out(account)
+
+
+@app.put("/api/admin/aws-accounts/{account_id}")
+async def update_aws_account(
+    account_id: int,
+    payload: AwsAccountUpdateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    account = db.query(AwsAccountConfig).filter(AwsAccountConfig.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="AWS account not found")
+
+    if payload.name is not None:
+        if payload.name != account.name and db.query(AwsAccountConfig).filter(AwsAccountConfig.name == payload.name).first():
+            raise HTTPException(status_code=409, detail="AWS account name already exists")
+        account.name = payload.name
+
+    if payload.access_key_ref_id is not None:
+        ref = db.query(SecretReference).filter(SecretReference.id == payload.access_key_ref_id).first()
+        if not ref:
+            raise HTTPException(status_code=404, detail="Access key secret reference not found")
+        account.access_key_ref_id = payload.access_key_ref_id
+
+    if payload.secret_access_key_ref_id is not None:
+        ref = db.query(SecretReference).filter(SecretReference.id == payload.secret_access_key_ref_id).first()
+        if not ref:
+            raise HTTPException(status_code=404, detail="Secret access key reference not found")
+        account.secret_access_key_ref_id = payload.secret_access_key_ref_id
+
+    if "session_token_ref_id" in payload.model_fields_set:
+        if payload.session_token_ref_id is None:
+            account.session_token_ref_id = None
+        else:
+            ref = db.query(SecretReference).filter(SecretReference.id == payload.session_token_ref_id).first()
+            if not ref:
+                raise HTTPException(status_code=404, detail="Session token reference not found")
+            account.session_token_ref_id = payload.session_token_ref_id
+
+    if "regions" in payload.model_fields_set:
+        account.regions_json = json.dumps(payload.regions) if payload.regions is not None else None
+    if payload.is_active is not None:
+        account.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(account)
+    return _aws_account_out(account)
+
+
+@app.delete("/api/admin/aws-accounts/{account_id}")
+async def delete_aws_account(
+    account_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    account = db.query(AwsAccountConfig).filter(AwsAccountConfig.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="AWS account not found")
+
+    if db.query(ScanProfile).filter(ScanProfile.scan_type == "aws", ScanProfile.config_json.like(f'%"aws_account_id": {account_id}%')).first():
+        raise HTTPException(status_code=409, detail="AWS account is in use by scan profiles")
+
+    db.delete(account)
+    db.commit()
+    return {"message": "AWS account deleted"}
 
 
 @app.get("/api/admin/scan-profiles")

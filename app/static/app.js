@@ -7,9 +7,12 @@ const loginForm = document.getElementById("loginForm");
 const changePasswordForm = document.getElementById("changePasswordForm");
 const logoutBtn = document.getElementById("logoutBtn");
 const passwordChangePanel = document.getElementById("passwordChangePanel");
+const menuToggleBtn = document.getElementById("menuToggleBtn");
+const menuDropdown = document.getElementById("menuDropdown");
 
 const runsPanel = document.getElementById("runsPanel");
 const inventoryPanel = document.getElementById("inventoryPanel");
+const inventoryTableBody = document.getElementById("inventoryTableBody");
 const modelsPanel = document.getElementById("modelsPanel");
 const usersPanel = document.getElementById("usersPanel");
 const profilesPanel = document.getElementById("profilesPanel");
@@ -28,6 +31,45 @@ const profileEditBanner = document.getElementById("profileEditBanner");
 
 const profileScanType = document.getElementById("profileScanType");
 const profileConfigInput = document.getElementById("profileConfigInput");
+const azureTenantsPanel = document.getElementById("azureTenantsPanel");
+const awsAccountsPanel = document.getElementById("awsAccountsPanel");
+const secretRefsPanel = document.getElementById("secretRefsPanel");
+const refreshCloudConfigBtn = document.getElementById("refreshCloudConfigBtn");
+const openAzureTenantModalBtn = document.getElementById("openAzureTenantModalBtn");
+const openAwsAccountModalBtn = document.getElementById("openAwsAccountModalBtn");
+const openSecretRefModalBtn = document.getElementById("openSecretRefModalBtn");
+const azureTenantModal = document.getElementById("azureTenantModal");
+const azureTenantModalTitle = document.getElementById("azureTenantModalTitle");
+const saveAzureTenantBtn = document.getElementById("saveAzureTenantBtn");
+const closeAzureTenantModalBtn = document.getElementById("closeAzureTenantModalBtn");
+const azureTenantForm = document.getElementById("azureTenantForm");
+const azureClientSecretMode = document.getElementById("azureClientSecretMode");
+const azureClientSecretRefSelect = document.getElementById("azureClientSecretRefSelect");
+const azureSecretRefPanel = document.getElementById("azureSecretRefPanel");
+const azureInlineSecretPanel = document.getElementById("azureInlineSecretPanel");
+const azureInlineClientSecretInput = document.getElementById("azureInlineClientSecretInput");
+const awsAccountModal = document.getElementById("awsAccountModal");
+const awsAccountModalTitle = document.getElementById("awsAccountModalTitle");
+const saveAwsAccountBtn = document.getElementById("saveAwsAccountBtn");
+const closeAwsAccountModalBtn = document.getElementById("closeAwsAccountModalBtn");
+const awsAccountForm = document.getElementById("awsAccountForm");
+const awsAccessKeyRefSelect = document.getElementById("awsAccessKeyRefSelect");
+const awsSecretAccessKeyRefSelect = document.getElementById("awsSecretAccessKeyRefSelect");
+const awsSessionTokenRefSelect = document.getElementById("awsSessionTokenRefSelect");
+const azureProfileWizardModal = document.getElementById("azureProfileWizardModal");
+const closeAzureProfileWizardModalBtn = document.getElementById("closeAzureProfileWizardModalBtn");
+const azureProfileWizardForm = document.getElementById("azureProfileWizardForm");
+const wizardTenantLabel = document.getElementById("wizardTenantLabel");
+const wizardProfileName = document.getElementById("wizardProfileName");
+const secretRefModal = document.getElementById("secretRefModal");
+const secretRefModalTitle = document.getElementById("secretRefModalTitle");
+const saveSecretRefBtn = document.getElementById("saveSecretRefBtn");
+const closeSecretRefModalBtn = document.getElementById("closeSecretRefModalBtn");
+const secretRefForm = document.getElementById("secretRefForm");
+const secretRefProvider = document.getElementById("secretRefProvider");
+const secretRefProviderEnv = document.getElementById("secretRefProviderEnv");
+const secretRefProviderAzure = document.getElementById("secretRefProviderAzure");
+const secretRefProviderAws = document.getElementById("secretRefProviderAws");
 
 const secretBuilderForm = document.getElementById("secretBuilderForm");
 const secretProviderSelect = document.getElementById("secretProvider");
@@ -51,6 +93,14 @@ const sensitiveFieldMap = {
 let accessToken = null;
 let currentUser = null;
 let profileEditId = null;
+let secretReferences = [];
+let azureTenants = [];
+let awsAccounts = [];
+let secretRefEditId = null;
+let azureTenantEditId = null;
+let awsAccountEditId = null;
+let wizardTenantId = null;
+let azureTenantCurrentSecretSource = null;
 
 function logActivity(value) {
   const line = `[${new Date().toISOString()}] ${value}`;
@@ -129,13 +179,31 @@ function setAdminVisibility(isAdmin) {
 }
 
 function activateTab(tabName) {
-  document.querySelectorAll(".tab[data-tab]").forEach((tab) => {
-    tab.classList.toggle("active", tab.dataset.tab === tabName);
+  document.querySelectorAll(".menu-item[data-tab]").forEach((item) => {
+    item.classList.toggle("active", item.dataset.tab === tabName);
   });
 
   document.querySelectorAll(".tab-view").forEach((view) => {
     view.classList.toggle("hidden", view.id !== `view-${tabName}`);
   });
+
+  if (menuDropdown && !menuDropdown.classList.contains("hidden")) {
+    menuDropdown.classList.add("hidden");
+  }
+}
+
+function openModal(modal) {
+  if (!modal) {
+    return;
+  }
+  modal.classList.remove("hidden");
+}
+
+function closeModal(modal) {
+  if (!modal) {
+    return;
+  }
+  modal.classList.add("hidden");
 }
 
 function setProfileEditState(editing, profile = null) {
@@ -187,6 +255,503 @@ async function loadAppData() {
   await refreshModels();
   await refreshUsers();
   await refreshProfiles();
+  await refreshCloudConfig();
+}
+
+function splitOptionalList(value) {
+  const parsed = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return parsed.length ? parsed : null;
+}
+
+function boolToSelectValue(value) {
+  return value ? "true" : "false";
+}
+
+function toggleSecretRefProviderPanels() {
+  const provider = secretRefProvider?.value;
+  if (!provider) {
+    return;
+  }
+  secretRefProviderEnv?.classList.toggle("hidden", provider !== "env");
+  secretRefProviderAzure?.classList.toggle("hidden", provider !== "azure_key_vault");
+  secretRefProviderAws?.classList.toggle("hidden", provider !== "aws_secrets_manager");
+}
+
+function buildSecretReferenceFromCatalogForm() {
+  const fd = new FormData(secretRefForm);
+  const provider = String(fd.get("provider") || "").trim();
+
+  if (provider === "env") {
+    return {
+      $secret: {
+        provider,
+        key: String(fd.get("env_key") || "").trim(),
+      },
+    };
+  }
+
+  if (provider === "azure_key_vault") {
+    const reference = {
+      $secret: {
+        provider,
+        vault_url: String(fd.get("azure_vault_url") || "").trim(),
+        name: String(fd.get("azure_name") || "").trim(),
+      },
+    };
+    const version = String(fd.get("azure_version") || "").trim();
+    if (version) {
+      reference.$secret.version = version;
+    }
+    return reference;
+  }
+
+  if (provider === "aws_secrets_manager") {
+    const reference = {
+      $secret: {
+        provider,
+        secret_id: String(fd.get("aws_secret_id") || "").trim(),
+      },
+    };
+    const region = String(fd.get("aws_region") || "").trim();
+    const jsonKey = String(fd.get("aws_json_key") || "").trim();
+    if (region) {
+      reference.$secret.region = region;
+    }
+    if (jsonKey) {
+      reference.$secret.json_key = jsonKey;
+    }
+    return reference;
+  }
+
+  throw new Error("Unsupported secret reference provider");
+}
+
+function parseSecretReference(secretRef) {
+  return secretRef?.reference?.$secret || {};
+}
+
+function populateSecretRefSelect(select, options = {}) {
+  if (!select) {
+    return;
+  }
+  const allowEmpty = Boolean(options.allowEmpty);
+  const emptyLabel = options.emptyLabel || "-- none --";
+
+  select.innerHTML = "";
+  if (allowEmpty) {
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = emptyLabel;
+    select.appendChild(emptyOption);
+  }
+
+  secretReferences.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = String(item.id);
+    option.textContent = `${item.name} (${item.provider})`;
+    select.appendChild(option);
+  });
+}
+
+function setSecretRefModalState(editing, secretRef = null) {
+  secretRefEditId = editing && secretRef ? secretRef.id : null;
+  if (secretRefModalTitle) {
+    secretRefModalTitle.textContent = editing ? "Edit Secret Reference" : "Create Secret Reference";
+  }
+  if (saveSecretRefBtn) {
+    saveSecretRefBtn.textContent = editing ? "Update Reference" : "Create Reference";
+  }
+
+  secretRefForm?.reset();
+
+  if (!editing || !secretRef) {
+    toggleSecretRefProviderPanels();
+    return;
+  }
+
+  secretRefForm.elements.name.value = secretRef.name;
+  const parsed = parseSecretReference(secretRef);
+  const provider = String(parsed.provider || "env");
+  secretRefProvider.value = provider;
+  toggleSecretRefProviderPanels();
+
+  if (provider === "env") {
+    secretRefForm.elements.env_key.value = parsed.key || "";
+  }
+
+  if (provider === "azure_key_vault") {
+    secretRefForm.elements.azure_vault_url.value = parsed.vault_url || "";
+    secretRefForm.elements.azure_name.value = parsed.name || "";
+    secretRefForm.elements.azure_version.value = parsed.version || "";
+  }
+
+  if (provider === "aws_secrets_manager") {
+    secretRefForm.elements.aws_secret_id.value = parsed.secret_id || "";
+    secretRefForm.elements.aws_region.value = parsed.region || "";
+    secretRefForm.elements.aws_json_key.value = parsed.json_key || "";
+  }
+}
+
+function setAzureTenantModalState(editing, tenant = null) {
+  azureTenantEditId = editing && tenant ? tenant.id : null;
+  azureTenantCurrentSecretSource = editing && tenant ? tenant.client_secret_source : null;
+  if (azureTenantModalTitle) {
+    azureTenantModalTitle.textContent = editing ? "Edit Azure Tenant" : "Configure Azure Tenant";
+  }
+  if (saveAzureTenantBtn) {
+    saveAzureTenantBtn.textContent = editing ? "Update Azure Tenant" : "Save Azure Tenant";
+  }
+
+  azureTenantForm?.reset();
+  syncAzureSecretRefDropdown();
+  if (azureClientSecretMode) {
+    azureClientSecretMode.value = "reference";
+  }
+  if (azureInlineClientSecretInput) {
+    azureInlineClientSecretInput.placeholder = "Enter Azure app client secret";
+  }
+  toggleAzureSecretModePanels();
+
+  if (!editing || !tenant || !azureTenantForm) {
+    return;
+  }
+
+  azureTenantForm.elements.name.value = tenant.name;
+  azureTenantForm.elements.tenant_id.value = tenant.tenant_id;
+  azureTenantForm.elements.client_id.value = tenant.client_id;
+  if (tenant.client_secret_source === "encrypted") {
+    if (azureClientSecretMode) {
+      azureClientSecretMode.value = "inline_encrypted";
+    }
+    if (azureInlineClientSecretInput) {
+      azureInlineClientSecretInput.placeholder = "Leave blank to keep current encrypted secret";
+    }
+  } else {
+    if (azureClientSecretMode) {
+      azureClientSecretMode.value = "reference";
+    }
+    if (tenant.client_secret_ref_id != null) {
+      azureTenantForm.elements.client_secret_ref_id.value = String(tenant.client_secret_ref_id);
+    }
+  }
+  toggleAzureSecretModePanels();
+  azureTenantForm.elements.subscription_ids.value = (tenant.subscription_ids || []).join(",");
+  azureTenantForm.elements.is_active.value = boolToSelectValue(tenant.is_active);
+}
+
+function toggleAzureSecretModePanels() {
+  const mode = String(azureClientSecretMode?.value || "reference");
+  azureSecretRefPanel?.classList.toggle("hidden", mode !== "reference");
+  azureInlineSecretPanel?.classList.toggle("hidden", mode !== "inline_encrypted");
+}
+
+function setAwsAccountModalState(editing, account = null) {
+  awsAccountEditId = editing && account ? account.id : null;
+  if (awsAccountModalTitle) {
+    awsAccountModalTitle.textContent = editing ? "Edit AWS Account" : "Configure AWS Account";
+  }
+  if (saveAwsAccountBtn) {
+    saveAwsAccountBtn.textContent = editing ? "Update AWS Account" : "Save AWS Account";
+  }
+
+  awsAccountForm?.reset();
+  syncAwsSecretRefDropdowns();
+
+  if (!editing || !account || !awsAccountForm) {
+    return;
+  }
+
+  awsAccountForm.elements.name.value = account.name;
+  awsAccountForm.elements.access_key_ref_id.value = String(account.access_key_ref_id);
+  awsAccountForm.elements.secret_access_key_ref_id.value = String(account.secret_access_key_ref_id);
+  awsAccountForm.elements.session_token_ref_id.value = account.session_token_ref_id
+    ? String(account.session_token_ref_id)
+    : "";
+  awsAccountForm.elements.regions.value = (account.regions || []).join(",");
+  awsAccountForm.elements.is_active.value = boolToSelectValue(account.is_active);
+}
+
+function renderSecretReferencesPanel() {
+  if (!secretRefsPanel) {
+    return;
+  }
+  if (!secretReferences.length) {
+    secretRefsPanel.innerHTML = '<div class="list-item">No secret references configured.</div>';
+    return;
+  }
+
+  secretRefsPanel.innerHTML = secretReferences
+    .map(
+      (item) => `
+      <div class="list-item">
+        <h4>${item.name}</h4>
+        <div>Provider: ${item.provider}</div>
+        <div class="mini-actions">
+          <button data-edit-secret-ref="${item.id}">Edit</button>
+          <button data-delete-secret-ref="${item.id}" class="secondary">Delete</button>
+        </div>
+      </div>
+    `,
+    )
+    .join("");
+
+  secretRefsPanel.querySelectorAll("button[data-edit-secret-ref]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = Number(button.dataset.editSecretRef);
+      const secretRef = secretReferences.find((item) => item.id === id);
+      if (!secretRef) {
+        return;
+      }
+      setSecretRefModalState(true, secretRef);
+      openModal(secretRefModal);
+    });
+  });
+
+  secretRefsPanel.querySelectorAll("button[data-delete-secret-ref]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = Number(button.dataset.deleteSecretRef);
+      const secretRef = secretReferences.find((item) => item.id === id);
+      if (!secretRef) {
+        return;
+      }
+      if (!window.confirm(`Delete secret reference '${secretRef.name}'?`)) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/admin/secret-references/${id}`, { method: "DELETE" });
+        await refreshCloudConfig();
+        logActivity(`Secret reference deleted: ${secretRef.name}`);
+      } catch (error) {
+        logActivity(`Failed to delete secret reference: ${String(error)}`);
+      }
+    });
+  });
+}
+
+function syncAzureSecretRefDropdown() {
+  populateSecretRefSelect(azureClientSecretRefSelect);
+}
+
+function syncAwsSecretRefDropdowns() {
+  populateSecretRefSelect(awsAccessKeyRefSelect);
+  populateSecretRefSelect(awsSecretAccessKeyRefSelect);
+  populateSecretRefSelect(awsSessionTokenRefSelect, { allowEmpty: true, emptyLabel: "-- no session token --" });
+}
+
+function renderAzureTenantsPanel() {
+  if (!azureTenantsPanel) {
+    return;
+  }
+  if (!azureTenants.length) {
+    azureTenantsPanel.innerHTML = '<div class="list-item">No Azure tenants configured.</div>';
+    return;
+  }
+
+  azureTenantsPanel.innerHTML = azureTenants
+    .map(
+      (tenant) => `
+      <div class="list-item">
+        <h4>${tenant.name}</h4>
+        <div>Tenant ID: ${tenant.tenant_id}</div>
+        <div>Client ID: ${tenant.client_id}</div>
+        <div>Secret: ${tenant.client_secret_ref_name || "unknown"}</div>
+        <div>Secret Source: ${tenant.client_secret_source}</div>
+        <div>Active: ${tenant.is_active}</div>
+        <div class="mini-actions">
+          <button data-use-azure-tenant="${tenant.id}">Use In Profile</button>
+          <button data-wizard-azure-tenant="${tenant.id}">Profile Wizard</button>
+          <button data-edit-azure-tenant="${tenant.id}">Edit</button>
+          <button data-delete-azure-tenant="${tenant.id}" class="secondary">Delete</button>
+        </div>
+      </div>
+    `,
+    )
+    .join("");
+
+  azureTenantsPanel.querySelectorAll("button[data-use-azure-tenant]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tenantId = Number(button.dataset.useAzureTenant);
+      if (profileScanType) {
+        profileScanType.value = "azure";
+      }
+      refreshTargetFieldOptions();
+
+      profileConfigInput.value = JSON.stringify(
+        {
+          tenant_config_id: tenantId,
+          max_resources_per_subscription: 2000,
+        },
+        null,
+        2,
+      );
+
+      activateTab("admin");
+      logActivity(`Inserted Azure tenant config ${tenantId} into profile config.`);
+    });
+  });
+
+  azureTenantsPanel.querySelectorAll("button[data-wizard-azure-tenant]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tenantId = Number(button.dataset.wizardAzureTenant);
+      const tenant = azureTenants.find((item) => item.id === tenantId);
+      if (!tenant) {
+        return;
+      }
+      wizardTenantId = tenant.id;
+      if (wizardTenantLabel) {
+        wizardTenantLabel.textContent = `Selected tenant: ${tenant.name}`;
+      }
+      if (wizardProfileName) {
+        wizardProfileName.value = `azure-${tenant.name}-profile`;
+      }
+      azureProfileWizardForm?.reset();
+      if (wizardProfileName) {
+        wizardProfileName.value = `azure-${tenant.name}-profile`;
+      }
+      openModal(azureProfileWizardModal);
+    });
+  });
+
+  azureTenantsPanel.querySelectorAll("button[data-edit-azure-tenant]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tenantId = Number(button.dataset.editAzureTenant);
+      const tenant = azureTenants.find((item) => item.id === tenantId);
+      if (!tenant) {
+        return;
+      }
+      setAzureTenantModalState(true, tenant);
+      openModal(azureTenantModal);
+    });
+  });
+
+  azureTenantsPanel.querySelectorAll("button[data-delete-azure-tenant]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const tenantId = Number(button.dataset.deleteAzureTenant);
+      const tenant = azureTenants.find((item) => item.id === tenantId);
+      if (!tenant) {
+        return;
+      }
+      if (!window.confirm(`Delete Azure tenant '${tenant.name}'?`)) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/admin/azure-tenants/${tenantId}`, { method: "DELETE" });
+        await refreshCloudConfig();
+        logActivity(`Azure tenant deleted: ${tenant.name}`);
+      } catch (error) {
+        logActivity(`Failed to delete Azure tenant: ${String(error)}`);
+      }
+    });
+  });
+}
+
+function renderAwsAccountsPanel() {
+  if (!awsAccountsPanel) {
+    return;
+  }
+  if (!awsAccounts.length) {
+    awsAccountsPanel.innerHTML = '<div class="list-item">No AWS accounts configured.</div>';
+    return;
+  }
+
+  awsAccountsPanel.innerHTML = awsAccounts
+    .map(
+      (account) => `
+      <div class="list-item">
+        <h4>${account.name}</h4>
+        <div>Access Ref: ${account.access_key_ref_name}</div>
+        <div>Secret Ref: ${account.secret_access_key_ref_name}</div>
+        <div>Session Ref: ${account.session_token_ref_name || "none"}</div>
+        <div>Regions: ${(account.regions || []).join(", ") || "all"}</div>
+        <div>Active: ${account.is_active}</div>
+        <div class="mini-actions">
+          <button data-use-aws-account="${account.id}">Use In Profile</button>
+          <button data-edit-aws-account="${account.id}">Edit</button>
+          <button data-delete-aws-account="${account.id}" class="secondary">Delete</button>
+        </div>
+      </div>
+    `,
+    )
+    .join("");
+
+  awsAccountsPanel.querySelectorAll("button[data-use-aws-account]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const accountId = Number(button.dataset.useAwsAccount);
+      if (profileScanType) {
+        profileScanType.value = "aws";
+      }
+      refreshTargetFieldOptions();
+
+      profileConfigInput.value = JSON.stringify(
+        {
+          aws_account_id: accountId,
+          max_resources_per_region: 2000,
+        },
+        null,
+        2,
+      );
+
+      activateTab("admin");
+      logActivity(`Inserted AWS account config ${accountId} into profile config.`);
+    });
+  });
+
+  awsAccountsPanel.querySelectorAll("button[data-edit-aws-account]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const accountId = Number(button.dataset.editAwsAccount);
+      const account = awsAccounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      setAwsAccountModalState(true, account);
+      openModal(awsAccountModal);
+    });
+  });
+
+  awsAccountsPanel.querySelectorAll("button[data-delete-aws-account]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const accountId = Number(button.dataset.deleteAwsAccount);
+      const account = awsAccounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      if (!window.confirm(`Delete AWS account '${account.name}'?`)) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/admin/aws-accounts/${accountId}`, { method: "DELETE" });
+        await refreshCloudConfig();
+        logActivity(`AWS account deleted: ${account.name}`);
+      } catch (error) {
+        logActivity(`Failed to delete AWS account: ${String(error)}`);
+      }
+    });
+  });
+}
+
+async function refreshCloudConfig() {
+  if (currentUser?.role !== "admin") {
+    return;
+  }
+
+  const [refs, tenants, aws] = await Promise.all([
+    apiFetch("/api/admin/secret-references"),
+    apiFetch("/api/admin/azure-tenants"),
+    apiFetch("/api/admin/aws-accounts"),
+  ]);
+
+  secretReferences = refs;
+  azureTenants = tenants;
+  awsAccounts = Array.isArray(aws) ? aws : [];
+
+  renderSecretReferencesPanel();
+  syncAzureSecretRefDropdown();
+  syncAwsSecretRefDropdowns();
+  renderAzureTenantsPanel();
+  renderAwsAccountsPanel();
 }
 
 function refreshTargetFieldOptions() {
@@ -336,7 +901,35 @@ async function refreshInventory(provider = "", itemType = "", search = "") {
   }
 
   const items = await apiFetch(`/api/inventory/items?${params.toString()}`);
-  inventoryPanel.textContent = JSON.stringify(items, null, 2);
+
+  if (!inventoryTableBody) {
+    inventoryPanel.textContent = JSON.stringify(items, null, 2);
+    return;
+  }
+
+  if (!Array.isArray(items) || !items.length) {
+    inventoryTableBody.innerHTML = '<tr><td colspan="7" class="empty-cell">No inventory items found.</td></tr>';
+    return;
+  }
+
+  const rows = items
+    .map((item) => {
+      const discovered = item.discovered_at ? new Date(item.discovered_at).toLocaleString() : "";
+      return `
+        <tr>
+          <td>${item.provider || ""}</td>
+          <td>${item.item_type || ""}</td>
+          <td>${item.name || ""}</td>
+          <td>${item.region || ""}</td>
+          <td title="${item.item_key || ""}">${item.item_key || ""}</td>
+          <td title="${item.parent_key || ""}">${item.parent_key || ""}</td>
+          <td>${discovered}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  inventoryTableBody.innerHTML = rows;
 }
 
 async function refreshModels() {
@@ -487,10 +1080,33 @@ logoutBtn.addEventListener("click", () => {
   logActivity("Logged out");
 });
 
-document.querySelectorAll(".tab[data-tab]").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const tabName = tab.dataset.tab;
-    if (tab.classList.contains("admin-only") && currentUser?.role !== "admin") {
+if (menuToggleBtn) {
+  menuToggleBtn.addEventListener("click", () => {
+    const isHidden = menuDropdown.classList.contains("hidden");
+    menuDropdown.classList.toggle("hidden", !isHidden);
+    menuToggleBtn.setAttribute("aria-expanded", String(isHidden));
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!menuDropdown || !menuToggleBtn) {
+    return;
+  }
+  if (menuDropdown.classList.contains("hidden")) {
+    return;
+  }
+
+  const target = event.target;
+  if (menuDropdown.contains(target) || menuToggleBtn.contains(target)) {
+    return;
+  }
+  menuDropdown.classList.add("hidden");
+});
+
+document.querySelectorAll(".menu-item[data-tab]").forEach((item) => {
+  item.addEventListener("click", () => {
+    const tabName = item.dataset.tab;
+    if (item.classList.contains("admin-only") && currentUser?.role !== "admin") {
       return;
     }
     activateTab(tabName);
@@ -675,6 +1291,226 @@ if (copySecretBtn) {
   });
 }
 
+if (secretRefProvider) {
+  secretRefProvider.addEventListener("change", () => {
+    toggleSecretRefProviderPanels();
+  });
+}
+
+if (openSecretRefModalBtn) {
+  openSecretRefModalBtn.addEventListener("click", () => {
+    setSecretRefModalState(false);
+    openModal(secretRefModal);
+  });
+}
+
+if (closeSecretRefModalBtn) {
+  closeSecretRefModalBtn.addEventListener("click", () => {
+    setSecretRefModalState(false);
+    closeModal(secretRefModal);
+  });
+}
+
+if (secretRefForm) {
+  secretRefForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const fd = new FormData(secretRefForm);
+      const payload = {
+        name: String(fd.get("name") || "").trim(),
+        reference: buildSecretReferenceFromCatalogForm(),
+      };
+
+      const isEditing = Number.isInteger(secretRefEditId);
+      const path = isEditing ? `/api/admin/secret-references/${secretRefEditId}` : "/api/admin/secret-references";
+      const method = isEditing ? "PUT" : "POST";
+
+      await apiFetch(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      await refreshCloudConfig();
+      setSecretRefModalState(false);
+      closeModal(secretRefModal);
+      logActivity(`${isEditing ? "Secret reference updated" : "Secret reference created"}: ${payload.name}`);
+    } catch (error) {
+      logActivity(`Failed to create secret reference: ${String(error)}`);
+    }
+  });
+}
+
+if (openAzureTenantModalBtn) {
+  openAzureTenantModalBtn.addEventListener("click", async () => {
+    await refreshCloudConfig();
+    setAzureTenantModalState(false);
+    openModal(azureTenantModal);
+  });
+}
+
+if (closeAzureTenantModalBtn) {
+  closeAzureTenantModalBtn.addEventListener("click", () => {
+    setAzureTenantModalState(false);
+    closeModal(azureTenantModal);
+  });
+}
+
+if (azureClientSecretMode) {
+  azureClientSecretMode.addEventListener("change", () => {
+    toggleAzureSecretModePanels();
+  });
+}
+
+if (azureTenantForm) {
+  azureTenantForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(azureTenantForm);
+    const secretMode = String(fd.get("client_secret_mode") || "reference");
+    const payload = {
+      name: String(fd.get("name") || "").trim(),
+      tenant_id: String(fd.get("tenant_id") || "").trim(),
+      client_id: String(fd.get("client_id") || "").trim(),
+      subscription_ids: splitOptionalList(String(fd.get("subscription_ids") || "")),
+      is_active: String(fd.get("is_active") || "true") === "true",
+    };
+
+    const isEditing = Number.isInteger(azureTenantEditId);
+    if (secretMode === "reference") {
+      const refId = Number(fd.get("client_secret_ref_id"));
+      if (!Number.isInteger(refId) || refId <= 0) {
+        logActivity("Select a valid client secret reference.");
+        return;
+      }
+      payload.client_secret_ref_id = refId;
+    } else {
+      const inlineSecret = String(fd.get("client_secret") || "").trim();
+      if (inlineSecret) {
+        payload.client_secret = inlineSecret;
+      } else if (!isEditing || azureTenantCurrentSecretSource !== "encrypted") {
+        logActivity("Provide a client secret when using direct encrypted mode.");
+        return;
+      }
+    }
+
+    try {
+      const path = isEditing ? `/api/admin/azure-tenants/${azureTenantEditId}` : "/api/admin/azure-tenants";
+      const method = isEditing ? "PUT" : "POST";
+
+      await apiFetch(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      await refreshCloudConfig();
+      setAzureTenantModalState(false);
+      closeModal(azureTenantModal);
+      logActivity(`${isEditing ? "Azure tenant updated" : "Azure tenant created"}: ${payload.name}`);
+    } catch (error) {
+      logActivity(`Failed to save Azure tenant: ${String(error)}`);
+    }
+  });
+}
+
+if (openAwsAccountModalBtn) {
+  openAwsAccountModalBtn.addEventListener("click", async () => {
+    await refreshCloudConfig();
+    if (!secretReferences.length) {
+      logActivity("Create a secret reference first using 'Add Secret Reference', then configure AWS account.");
+      return;
+    }
+    setAwsAccountModalState(false);
+    openModal(awsAccountModal);
+  });
+}
+
+if (closeAwsAccountModalBtn) {
+  closeAwsAccountModalBtn.addEventListener("click", () => {
+    setAwsAccountModalState(false);
+    closeModal(awsAccountModal);
+  });
+}
+
+if (awsAccountForm) {
+  awsAccountForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(awsAccountForm);
+    const payload = {
+      name: String(fd.get("name") || "").trim(),
+      access_key_ref_id: Number(fd.get("access_key_ref_id")),
+      secret_access_key_ref_id: Number(fd.get("secret_access_key_ref_id")),
+      session_token_ref_id: fd.get("session_token_ref_id")
+        ? Number(fd.get("session_token_ref_id"))
+        : null,
+      regions: splitOptionalList(String(fd.get("regions") || "")),
+      is_active: String(fd.get("is_active") || "true") === "true",
+    };
+
+    try {
+      const isEditing = Number.isInteger(awsAccountEditId);
+      const path = isEditing ? `/api/admin/aws-accounts/${awsAccountEditId}` : "/api/admin/aws-accounts";
+      const method = isEditing ? "PUT" : "POST";
+      await apiFetch(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      await refreshCloudConfig();
+      setAwsAccountModalState(false);
+      closeModal(awsAccountModal);
+      logActivity(`${isEditing ? "AWS account updated" : "AWS account created"}: ${payload.name}`);
+    } catch (error) {
+      logActivity(`Failed to save AWS account: ${String(error)}`);
+    }
+  });
+}
+
+if (closeAzureProfileWizardModalBtn) {
+  closeAzureProfileWizardModalBtn.addEventListener("click", () => {
+    wizardTenantId = null;
+    closeModal(azureProfileWizardModal);
+  });
+}
+
+if (azureProfileWizardForm) {
+  azureProfileWizardForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!wizardTenantId) {
+      logActivity("No Azure tenant selected for wizard.");
+      return;
+    }
+
+    const fd = new FormData(azureProfileWizardForm);
+    const payload = {
+      profile_name: String(fd.get("profile_name") || "").trim() || null,
+      schedule_minutes: Number(fd.get("schedule_minutes") || 60),
+      max_resources_per_subscription: Number(fd.get("max_resources_per_subscription") || 2000),
+      is_enabled: String(fd.get("is_enabled") || "true") === "true",
+    };
+
+    try {
+      const profile = await apiFetch(`/api/admin/azure-tenants/${wizardTenantId}/create-profile`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeModal(azureProfileWizardModal);
+      wizardTenantId = null;
+      await refreshProfiles();
+      activateTab("admin");
+      logActivity(`Azure profile created from tenant: ${profile.name}`);
+    } catch (error) {
+      logActivity(`Failed to create profile from tenant: ${String(error)}`);
+    }
+  });
+}
+
+if (refreshCloudConfigBtn) {
+  refreshCloudConfigBtn.addEventListener("click", async () => {
+    try {
+      await refreshCloudConfig();
+      logActivity("Cloud account configuration refreshed");
+    } catch (error) {
+      logActivity(String(error));
+    }
+  });
+}
+
 userForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const fd = new FormData(userForm);
@@ -718,8 +1554,59 @@ refreshProfilesBtn.addEventListener("click", async () => {
   }
 });
 
+[azureTenantModal, awsAccountModal, azureProfileWizardModal, secretRefModal].forEach((modal) => {
+  if (!modal) {
+    return;
+  }
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      if (modal === azureTenantModal) {
+        setAzureTenantModalState(false);
+      }
+      if (modal === awsAccountModal) {
+        setAwsAccountModalState(false);
+      }
+      if (modal === secretRefModal) {
+        setSecretRefModalState(false);
+      }
+      if (modal === azureProfileWizardModal) {
+        wizardTenantId = null;
+      }
+      closeModal(modal);
+    }
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  if (secretRefModal && !secretRefModal.classList.contains("hidden")) {
+    setSecretRefModalState(false);
+    closeModal(secretRefModal);
+    return;
+  }
+  if (azureTenantModal && !azureTenantModal.classList.contains("hidden")) {
+    setAzureTenantModalState(false);
+    closeModal(azureTenantModal);
+    return;
+  }
+  if (awsAccountModal && !awsAccountModal.classList.contains("hidden")) {
+    setAwsAccountModalState(false);
+    closeModal(awsAccountModal);
+    return;
+  }
+  if (azureProfileWizardModal && !azureProfileWizardModal.classList.contains("hidden")) {
+    wizardTenantId = null;
+    closeModal(azureProfileWizardModal);
+  }
+});
+
 refreshTargetFieldOptions();
 toggleProviderPanels();
+toggleSecretRefProviderPanels();
+toggleAzureSecretModePanels();
 setProfileEditState(false);
 
 initializeSession();

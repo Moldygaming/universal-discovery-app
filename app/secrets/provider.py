@@ -1,12 +1,17 @@
 import json
 import os
+from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
 from typing import Any
 
 import boto3
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
+from cryptography.fernet import Fernet, InvalidToken
+
+from app.config import settings
 
 
 class SecretResolutionError(ValueError):
@@ -31,6 +36,55 @@ def parse_secret_ref(value: dict[str, Any]) -> SecretReference:
 
     params = {key: val for key, val in ref.items() if key != "provider"}
     return SecretReference(provider=provider, params=params)
+
+
+def validate_secret_reference(value: dict[str, Any]) -> SecretReference:
+    ref = parse_secret_ref(value)
+
+    if ref.provider == "env":
+        if not str(ref.params.get("key") or "").strip():
+            raise SecretResolutionError("env provider requires 'key'")
+        return ref
+
+    if ref.provider == "azure_key_vault":
+        if not str(ref.params.get("vault_url") or "").strip():
+            raise SecretResolutionError("azure_key_vault provider requires 'vault_url'")
+        if not str(ref.params.get("name") or "").strip():
+            raise SecretResolutionError("azure_key_vault provider requires 'name'")
+        return ref
+
+    if ref.provider == "aws_secrets_manager":
+        if not str(ref.params.get("secret_id") or "").strip():
+            raise SecretResolutionError("aws_secrets_manager provider requires 'secret_id'")
+        return ref
+
+    if ref.provider == "local_encrypted":
+        if not str(ref.params.get("ciphertext") or "").strip():
+            raise SecretResolutionError("local_encrypted provider requires 'ciphertext'")
+        return ref
+
+    raise SecretResolutionError(f"Unsupported secret provider: {ref.provider}")
+
+
+@lru_cache(maxsize=1)
+def _local_cipher() -> Fernet:
+    raw_key = (settings.local_secret_encryption_key or "").strip()
+    if raw_key:
+        digest = hashlib.sha256(raw_key.encode("utf-8")).digest()
+    else:
+        digest = hashlib.sha256(settings.jwt_secret.encode("utf-8")).digest()
+    fernet_key = urlsafe_b64encode(digest)
+    return Fernet(fernet_key)
+
+
+def build_local_encrypted_secret_reference(secret_value: str) -> dict[str, Any]:
+    ciphertext = _local_cipher().encrypt(secret_value.encode("utf-8")).decode("utf-8")
+    return {
+        "$secret": {
+            "provider": "local_encrypted",
+            "ciphertext": ciphertext,
+        }
+    }
 
 
 @lru_cache(maxsize=8)
@@ -95,6 +149,17 @@ def _resolve_aws_secrets_manager(params: dict[str, Any]) -> str:
     return secret_string
 
 
+def _resolve_local_encrypted(params: dict[str, Any]) -> str:
+    ciphertext = str(params.get("ciphertext") or "").strip()
+    if not ciphertext:
+        raise SecretResolutionError("local_encrypted provider requires 'ciphertext'")
+
+    try:
+        return _local_cipher().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise SecretResolutionError("Failed to decrypt local_encrypted secret reference") from exc
+
+
 def resolve_secret_reference(ref: SecretReference) -> str:
     if ref.provider == "env":
         return _resolve_env(ref.params)
@@ -102,6 +167,8 @@ def resolve_secret_reference(ref: SecretReference) -> str:
         return _resolve_azure_key_vault(ref.params)
     if ref.provider == "aws_secrets_manager":
         return _resolve_aws_secrets_manager(ref.params)
+    if ref.provider == "local_encrypted":
+        return _resolve_local_encrypted(ref.params)
 
     raise SecretResolutionError(f"Unsupported secret provider: {ref.provider}")
 

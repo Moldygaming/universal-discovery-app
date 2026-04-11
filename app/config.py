@@ -18,6 +18,7 @@ class Settings:
     db_url: str = os.getenv("UDA_DB_URL", "sqlite:///./data/discovery.db")
     bootstrap_admin_username: str = os.getenv("UDA_BOOTSTRAP_ADMIN", "admin")
     default_admin_password: str = os.getenv("UDA_DEFAULT_ADMIN_PASSWORD", "Admin123£")
+    local_secret_encryption_key: str = os.getenv("UDA_LOCAL_SECRET_ENCRYPTION_KEY", "")
 
     entra_enabled: bool = _as_bool(os.getenv("ENTRA_ENABLED", "false"))
     entra_tenant_id: str = os.getenv("ENTRA_TENANT_ID", "")

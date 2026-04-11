@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db_models import InventoryItem, ScanProfile, ScanRun
+from app.db_models import AwsAccountConfig, AzureTenantConfig, InventoryItem, ScanProfile, ScanRun
 from app.secrets.provider import is_secret_ref, resolve_secrets
 from app.services.aws_inventory import discover_aws_resources
 from app.services.azure_inventory import discover_azure_resources
@@ -40,7 +40,7 @@ def mask_sensitive_config(config: dict[str, Any]) -> dict[str, Any]:
     return {key: _mask(key, value) for key, value in config.items()}
 
 
-async def run_profile_scan(profile: ScanProfile) -> tuple[dict[str, Any], dict[str, Any]]:
+async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str, Any], dict[str, Any]]:
     cfg = resolve_secrets(_json_load(profile.config_json))
     scan_type = profile.scan_type
 
@@ -76,12 +76,32 @@ async def run_profile_scan(profile: ScanProfile) -> tuple[dict[str, Any], dict[s
         return summary, {"results": results}
 
     if scan_type == "azure":
+        tenant_id = cfg.get("tenant_id")
+        client_id = cfg.get("client_id")
+        client_secret = cfg.get("client_secret")
+        subscription_ids = cfg.get("subscription_ids")
+
+        tenant_config_id = cfg.get("tenant_config_id")
+        if tenant_config_id is not None:
+            tenant_config = db.query(AzureTenantConfig).filter(AzureTenantConfig.id == int(tenant_config_id)).first()
+            if not tenant_config or not tenant_config.is_active:
+                raise ValueError(f"Azure tenant config not found or inactive: {tenant_config_id}")
+            secret_reference = _json_load(tenant_config.client_secret_ref.reference_json)
+            resolved_secret = resolve_secrets(secret_reference)
+            tenant_id = tenant_config.tenant_id
+            client_id = tenant_config.client_id
+            client_secret = str(resolved_secret)
+            subscription_ids = _json_load(tenant_config.subscription_ids_json) if tenant_config.subscription_ids_json else None
+
+        if not tenant_id or not client_id or not client_secret:
+            raise ValueError("Azure scan requires tenant_id, client_id, and client_secret or tenant_config_id")
+
         result = await asyncio.to_thread(
             discover_azure_resources,
-            cfg["tenant_id"],
-            cfg["client_id"],
-            cfg["client_secret"],
-            cfg.get("subscription_ids"),
+            str(tenant_id),
+            str(client_id),
+            str(client_secret),
+            subscription_ids,
             int(cfg.get("max_resources_per_subscription", 2000)),
         )
         summary = {
@@ -92,12 +112,34 @@ async def run_profile_scan(profile: ScanProfile) -> tuple[dict[str, Any], dict[s
         return summary, result
 
     if scan_type == "aws":
+        access_key_id = cfg.get("access_key_id")
+        secret_access_key = cfg.get("secret_access_key")
+        session_token = cfg.get("session_token")
+        regions = cfg.get("regions")
+
+        aws_account_id = cfg.get("aws_account_id")
+        if aws_account_id is not None:
+            aws_account = db.query(AwsAccountConfig).filter(AwsAccountConfig.id == int(aws_account_id)).first()
+            if not aws_account or not aws_account.is_active:
+                raise ValueError(f"AWS account config not found or inactive: {aws_account_id}")
+
+            access_key_id = str(resolve_secrets(_json_load(aws_account.access_key_ref.reference_json)))
+            secret_access_key = str(resolve_secrets(_json_load(aws_account.secret_access_key_ref.reference_json)))
+
+            if aws_account.session_token_ref_id and aws_account.session_token_ref is not None:
+                session_token = str(resolve_secrets(_json_load(aws_account.session_token_ref.reference_json)))
+
+            regions = _json_load(aws_account.regions_json) if aws_account.regions_json else None
+
+        if not access_key_id or not secret_access_key:
+            raise ValueError("AWS scan requires access_key_id and secret_access_key or aws_account_id")
+
         result = await asyncio.to_thread(
             discover_aws_resources,
-            cfg["access_key_id"],
-            cfg["secret_access_key"],
-            cfg.get("session_token"),
-            cfg.get("regions"),
+            str(access_key_id),
+            str(secret_access_key),
+            str(session_token) if session_token else None,
+            regions,
             int(cfg.get("max_resources_per_region", 2000)),
         )
         summary = {
@@ -217,7 +259,7 @@ async def execute_and_persist_scan(db: Session, profile: ScanProfile, triggered_
     db.refresh(run)
 
     try:
-        summary, result = await run_profile_scan(profile)
+        summary, result = await run_profile_scan(db, profile)
 
         run.status = "completed"
         run.summary_json = _json_dump(summary)

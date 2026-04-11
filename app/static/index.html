@@ -69,12 +69,15 @@
       </section>
 
       <section id="appPanel" class="hidden">
-        <div class="tabbar" data-reveal>
-          <button class="tab active" data-tab="inventory">Inventory</button>
-          <button class="tab" data-tab="service-models">Service Models</button>
-          <button class="tab admin-only" data-tab="admin">Admin Console</button>
-          <a class="tab linkish" href="/guide" target="_blank">User Guide</a>
-          <button id="logoutBtn" class="tab danger">Logout</button>
+        <div class="menu-shell" data-reveal>
+          <button id="menuToggleBtn" class="burger-btn" aria-label="Open menu" aria-expanded="false">&#9776;</button>
+          <div id="menuDropdown" class="menu-dropdown hidden">
+            <button class="menu-item active" data-tab="inventory">Inventory</button>
+            <button class="menu-item" data-tab="service-models">Service Models</button>
+            <button class="menu-item admin-only" data-tab="admin">Admin Console</button>
+            <a class="menu-link" href="/guide" target="_blank">User Guide</a>
+            <button id="logoutBtn" class="menu-item danger">Logout</button>
+          </div>
         </div>
 
         <section class="grid tab-view" id="view-inventory">
@@ -99,7 +102,26 @@
               </div>
               <button type="submit">Load Inventory</button>
             </form>
-            <pre id="inventoryPanel">No inventory loaded.</pre>
+            <div id="inventoryPanel" class="table-wrap">
+              <table class="inventory-table">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Type</th>
+                    <th>Name</th>
+                    <th>Region</th>
+                    <th>Key</th>
+                    <th>Parent</th>
+                    <th>Discovered</th>
+                  </tr>
+                </thead>
+                <tbody id="inventoryTableBody">
+                  <tr>
+                    <td colspan="7" class="empty-cell">No inventory loaded.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </article>
         </section>
 
@@ -112,6 +134,30 @@
         </section>
 
         <section class="grid tab-view hidden" id="view-admin">
+          <article class="card" data-reveal>
+            <h2>Cloud Accounts</h2>
+            <div class="actions-inline">
+              <button id="openAzureTenantModalBtn" type="button">Configure Azure Tenant</button>
+              <button id="openAwsAccountModalBtn" type="button">Configure AWS Account</button>
+              <button id="openSecretRefModalBtn" type="button" class="secondary">Add Secret Reference</button>
+              <button id="refreshCloudConfigBtn" type="button" class="secondary">Refresh Cloud Config</button>
+            </div>
+            <div class="split-panels">
+              <div>
+                <h3 class="small-head">Azure Tenants</h3>
+                <div id="azureTenantsPanel" class="list-panel"></div>
+              </div>
+              <div>
+                <h3 class="small-head">AWS Accounts</h3>
+                <div id="awsAccountsPanel" class="list-panel"></div>
+              </div>
+              <div>
+                <h3 class="small-head">Secret References</h3>
+                <div id="secretRefsPanel" class="list-panel"></div>
+              </div>
+            </div>
+          </article>
+
           <article class="card" data-reveal>
             <h2>Create Scan Profile</h2>
             <form id="profileForm">
@@ -266,6 +312,173 @@
         </div>
         <pre id="activityPanel">Ready.</pre>
       </section>
+
+      <div id="azureTenantModal" class="modal hidden">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="azureTenantModalTitle">Configure Azure Tenant</h3>
+            <button id="closeAzureTenantModalBtn" type="button" class="secondary">Close</button>
+          </div>
+          <form id="azureTenantForm">
+            <label>Tenant Name
+              <input name="name" required placeholder="prod-tenant" />
+            </label>
+            <div class="inline two">
+              <label>Tenant ID
+                <input name="tenant_id" required />
+              </label>
+              <label>Client ID
+                <input name="client_id" required />
+              </label>
+            </div>
+            <label>Client Secret Source
+              <select id="azureClientSecretMode" name="client_secret_mode">
+                <option value="reference" selected>Secret Reference (recommended)</option>
+                <option value="inline_encrypted">Direct Secret (stored encrypted)</option>
+              </select>
+            </label>
+            <div id="azureSecretRefPanel" class="provider-panel">
+              <label>Client Secret Reference
+                <select id="azureClientSecretRefSelect" name="client_secret_ref_id"></select>
+              </label>
+            </div>
+            <div id="azureInlineSecretPanel" class="provider-panel hidden">
+              <label>Client Secret (stored encrypted at rest)
+                <input id="azureInlineClientSecretInput" name="client_secret" type="password" placeholder="Enter Azure app client secret" autocomplete="new-password" />
+              </label>
+              <p class="hint">For edit mode, leave blank to keep the current encrypted secret.</p>
+            </div>
+            <label>Subscription IDs (comma separated, optional)
+              <input name="subscription_ids" placeholder="sub1,sub2" />
+            </label>
+            <label>Active
+              <select name="is_active">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <button id="saveAzureTenantBtn" type="submit">Save Azure Tenant</button>
+          </form>
+        </div>
+      </div>
+
+      <div id="awsAccountModal" class="modal hidden">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="awsAccountModalTitle">Configure AWS Account</h3>
+            <button id="closeAwsAccountModalBtn" type="button" class="secondary">Close</button>
+          </div>
+          <form id="awsAccountForm">
+            <label>Account Name
+              <input name="name" required placeholder="prod-aws-account" />
+            </label>
+            <div class="inline two">
+              <label>Access Key Reference
+                <select id="awsAccessKeyRefSelect" name="access_key_ref_id" required></select>
+              </label>
+              <label>Secret Access Key Reference
+                <select id="awsSecretAccessKeyRefSelect" name="secret_access_key_ref_id" required></select>
+              </label>
+            </div>
+            <label>Session Token Reference (optional)
+              <select id="awsSessionTokenRefSelect" name="session_token_ref_id"></select>
+            </label>
+            <label>Regions (comma separated, optional)
+              <input name="regions" placeholder="us-east-1,us-west-2" />
+            </label>
+            <label>Active
+              <select name="is_active">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <button id="saveAwsAccountBtn" type="submit">Save AWS Account</button>
+          </form>
+        </div>
+      </div>
+
+      <div id="azureProfileWizardModal" class="modal hidden">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3>Create Azure Profile</h3>
+            <button id="closeAzureProfileWizardModalBtn" type="button" class="secondary">Close</button>
+          </div>
+          <form id="azureProfileWizardForm">
+            <p class="hint" id="wizardTenantLabel">Selected tenant:</p>
+            <label>Profile Name
+              <input id="wizardProfileName" name="profile_name" placeholder="azure-tenant-profile" />
+            </label>
+            <div class="inline three">
+              <label>Schedule Minutes
+                <input name="schedule_minutes" type="number" min="1" max="10080" value="60" />
+              </label>
+              <label>Max Resources / Subscription
+                <input name="max_resources_per_subscription" type="number" min="1" max="50000" value="2000" />
+              </label>
+              <label>Enabled
+                <select name="is_enabled">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit">Create Profile From Tenant</button>
+          </form>
+        </div>
+      </div>
+
+      <div id="secretRefModal" class="modal hidden">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="secretRefModalTitle">Create Secret Reference</h3>
+            <button id="closeSecretRefModalBtn" type="button" class="secondary">Close</button>
+          </div>
+          <form id="secretRefForm">
+            <label>Reference Name
+              <input name="name" required placeholder="azure-discovery-client-secret" />
+            </label>
+            <label>Provider
+              <select id="secretRefProvider" name="provider">
+                <option value="env">env</option>
+                <option value="azure_key_vault">azure_key_vault</option>
+                <option value="aws_secrets_manager">aws_secrets_manager</option>
+              </select>
+            </label>
+            <div id="secretRefProviderEnv" class="provider-panel">
+              <label>Environment Variable Key
+                <input name="env_key" placeholder="SNMP_COMMUNITY" />
+              </label>
+            </div>
+            <div id="secretRefProviderAzure" class="provider-panel hidden">
+              <label>Vault URL
+                <input name="azure_vault_url" placeholder="https://my-vault.vault.azure.net/" />
+              </label>
+              <div class="inline two">
+                <label>Secret Name
+                  <input name="azure_name" placeholder="discovery-client-secret" />
+                </label>
+                <label>Version (optional)
+                  <input name="azure_version" />
+                </label>
+              </div>
+            </div>
+            <div id="secretRefProviderAws" class="provider-panel hidden">
+              <label>Secret ID
+                <input name="aws_secret_id" placeholder="discovery/aws" />
+              </label>
+              <div class="inline two">
+                <label>Region
+                  <input name="aws_region" placeholder="us-east-1" />
+                </label>
+                <label>JSON Key (optional)
+                  <input name="aws_json_key" />
+                </label>
+              </div>
+            </div>
+            <button id="saveSecretRefBtn" type="submit">Create Reference</button>
+          </form>
+        </div>
+      </div>
     </main>
 
     <script src="/static/app.js"></script>

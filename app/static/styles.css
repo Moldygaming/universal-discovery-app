@@ -215,7 +215,7 @@ button:hover {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .tabbar {
@@ -223,6 +223,68 @@ button:hover {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.menu-shell {
+  position: sticky;
+  top: 0.7rem;
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1.2rem;
+  padding-right: 0.35rem;
+  z-index: 1600;
+}
+
+.burger-btn {
+  width: 48px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 1.35rem;
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgba(25, 93, 69, 0.16);
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 54px;
+  right: 0;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 240px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(31, 43, 34, 0.15);
+  border-radius: 12px;
+  padding: 0.6rem;
+  box-shadow: var(--shadow);
+  z-index: 1700;
+}
+
+.menu-item,
+.menu-link {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid rgba(31, 43, 34, 0.12);
+  border-radius: 10px;
+  min-height: 38px;
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+}
+
+.menu-item.active {
+  background: linear-gradient(120deg, var(--accent), #1c7866);
+  color: #fff;
+}
+
+.menu-item.danger {
+  background: #fff6f4;
+  color: var(--danger);
+}
+
+.menu-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .tab {
@@ -256,6 +318,20 @@ button:hover {
   gap: 0.6rem;
 }
 
+.split-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+}
+
+.small-head {
+  margin-top: 0;
+  margin-bottom: 0.55rem;
+  font-size: 0.93rem;
+  color: var(--muted);
+}
+
 .provider-panel {
   border: 1px dashed rgba(31, 43, 34, 0.22);
   border-radius: 10px;
@@ -278,6 +354,38 @@ button:hover {
   min-height: 120px;
   max-height: 240px;
   margin-top: 0.7rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 15, 11, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 1rem;
+}
+
+.modal-card {
+  width: min(680px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid rgba(31, 43, 34, 0.14);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.modal-head h3 {
+  margin: 0;
 }
 
 .list-item {
@@ -312,6 +420,52 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.table-wrap {
+  margin-top: 0.8rem;
+  border: 1px solid rgba(31, 43, 34, 0.15);
+  border-radius: 12px;
+  overflow: auto;
+  max-height: 55vh;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 920px;
+  font-size: 0.84rem;
+}
+
+.inventory-table thead th {
+  position: sticky;
+  top: 0;
+  background: #ebf2ed;
+  color: var(--text);
+  text-align: left;
+  border-bottom: 1px solid rgba(31, 43, 34, 0.2);
+  padding: 0.55rem 0.6rem;
+  z-index: 1;
+}
+
+.inventory-table td {
+  border-bottom: 1px solid rgba(31, 43, 34, 0.09);
+  padding: 0.5rem 0.6rem;
+  vertical-align: top;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inventory-table tr:nth-child(even) td {
+  background: rgba(243, 248, 244, 0.75);
+}
+
+.empty-cell {
+  color: var(--muted);
+  text-align: center;
 }
 
 pre {
@@ -385,6 +539,10 @@ pre {
 
   .actions-inline {
     flex-direction: column;
+  }
+
+  .split-panels {
+    grid-template-columns: 1fr;
   }
 
   .actions-inline button {
