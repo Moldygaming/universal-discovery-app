@@ -73,6 +73,7 @@
           <button id="menuToggleBtn" class="burger-btn" aria-label="Open menu" aria-expanded="false">&#9776;</button>
           <div id="menuDropdown" class="menu-dropdown hidden">
             <button class="menu-item active" data-tab="inventory">Inventory</button>
+            <button class="menu-item" data-tab="scan-history">Scan History</button>
             <button class="menu-item" data-tab="service-models">Service Models</button>
             <button class="menu-item admin-only" data-tab="admin">Admin Console</button>
             <a class="menu-link" href="/guide" target="_blank">User Guide</a>
@@ -80,21 +81,20 @@
           </div>
         </div>
 
-        <section class="grid tab-view" id="view-inventory">
-          <article class="card" data-reveal>
-            <h2>Recent Scan Runs</h2>
-            <button id="refreshRunsBtn">Refresh Runs</button>
-            <pre id="runsPanel">No scan runs loaded.</pre>
-          </article>
+        <section class="tab-view tab-view-wide" id="view-inventory">
           <article class="card" data-reveal>
             <h2>Inventory Items</h2>
             <form id="inventoryFilterForm">
               <div class="inline three">
                 <label>Provider
-                  <input name="provider" placeholder="aws / azure / network" />
+                  <select id="inventoryProviderFilter" name="provider">
+                    <option value="">All providers</option>
+                  </select>
                 </label>
                 <label>Item Type
-                  <input name="item_type" placeholder="aws.ec2.instance" />
+                  <select id="inventoryItemTypeFilter" name="item_type">
+                    <option value="">All item types</option>
+                  </select>
                 </label>
                 <label>Search
                   <input name="search" placeholder="name or key" />
@@ -104,7 +104,7 @@
             </form>
             <div id="inventoryPanel" class="table-wrap">
               <table class="inventory-table">
-                <thead>
+                <thead id="inventoryTableHead">
                   <tr>
                     <th>Provider</th>
                     <th>Type</th>
@@ -122,6 +122,14 @@
                 </tbody>
               </table>
             </div>
+          </article>
+        </section>
+
+        <section class="tab-view tab-view-wide hidden" id="view-scan-history">
+          <article class="card" data-reveal>
+            <h2>Recent Scan Runs</h2>
+            <button id="refreshRunsBtn">Refresh Runs</button>
+            <pre id="runsPanel">No scan runs loaded.</pre>
           </article>
         </section>
 

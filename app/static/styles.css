@@ -83,6 +83,14 @@ body {
   gap: 1rem;
 }
 
+.tab-view-wide {
+  margin-top: 1.6rem;
+}
+
+.tab-view-wide .card {
+  width: 100%;
+}
+
 .card,
 .results {
   backdrop-filter: blur(10px);
@@ -427,7 +435,7 @@ button:hover {
   border: 1px solid rgba(31, 43, 34, 0.15);
   border-radius: 12px;
   overflow: auto;
-  max-height: 55vh;
+  max-height: 68vh;
   background: rgba(255, 255, 255, 0.82);
 }
 

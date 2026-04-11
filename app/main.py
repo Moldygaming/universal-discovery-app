@@ -908,6 +908,34 @@ async def list_runs(
     return [_run_out(run) for run in runs]
 
 
+@app.get("/api/inventory/filter-options")
+async def list_inventory_filter_options(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    rows = db.query(InventoryItem.provider, InventoryItem.item_type).all()
+
+    providers = sorted({provider for provider, _ in rows if provider})
+    item_types = sorted({item_type for _, item_type in rows if item_type})
+
+    provider_item_types: dict[str, list[str]] = {}
+    for provider in providers:
+        provider_types = sorted(
+            {
+                item_type
+                for row_provider, item_type in rows
+                if row_provider == provider and item_type
+            }
+        )
+        provider_item_types[provider] = provider_types
+
+    return {
+        "providers": providers,
+        "item_types": item_types,
+        "provider_item_types": provider_item_types,
+    }
+
+
 @app.get("/api/inventory/items")
 async def list_inventory(
     provider: str | None = None,

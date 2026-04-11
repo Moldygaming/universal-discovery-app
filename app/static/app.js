@@ -12,7 +12,10 @@ const menuDropdown = document.getElementById("menuDropdown");
 
 const runsPanel = document.getElementById("runsPanel");
 const inventoryPanel = document.getElementById("inventoryPanel");
+const inventoryTableHead = document.getElementById("inventoryTableHead");
 const inventoryTableBody = document.getElementById("inventoryTableBody");
+const inventoryProviderFilter = document.getElementById("inventoryProviderFilter");
+const inventoryItemTypeFilter = document.getElementById("inventoryItemTypeFilter");
 const modelsPanel = document.getElementById("modelsPanel");
 const usersPanel = document.getElementById("usersPanel");
 const profilesPanel = document.getElementById("profilesPanel");
@@ -101,6 +104,8 @@ let azureTenantEditId = null;
 let awsAccountEditId = null;
 let wizardTenantId = null;
 let azureTenantCurrentSecretSource = null;
+let inventoryProviderTypeMap = {};
+let inventoryAllItemTypes = [];
 
 function logActivity(value) {
   const line = `[${new Date().toISOString()}] ${value}`;
@@ -190,6 +195,10 @@ function activateTab(tabName) {
   if (menuDropdown && !menuDropdown.classList.contains("hidden")) {
     menuDropdown.classList.add("hidden");
   }
+
+  if (tabName === "scan-history") {
+    refreshRuns().catch((error) => logActivity(String(error)));
+  }
 }
 
 function openModal(modal) {
@@ -251,6 +260,7 @@ function resetProfileForm() {
 async function loadAppData() {
   activateTab("inventory");
   await refreshRuns();
+  await refreshInventoryFilterOptions();
   await refreshInventory();
   await refreshModels();
   await refreshUsers();
@@ -268,6 +278,136 @@ function splitOptionalList(value) {
 
 function boolToSelectValue(value) {
   return value ? "true" : "false";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function toReadableWords(raw) {
+  return String(raw || "")
+    .replace(/[._-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .split(" ")
+    .filter(Boolean)
+    .map((token) => {
+      if (/^\d/.test(token)) {
+        return token.toUpperCase();
+      }
+      if (token.length <= 3 && /^[a-z0-9]+$/i.test(token)) {
+        return token.toUpperCase();
+      }
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+function singularizeTail(value) {
+  if (value.endsWith("ies") && value.length > 4) {
+    return `${value.slice(0, -3)}y`;
+  }
+  if (value.endsWith("sses") || value.endsWith("status")) {
+    return value;
+  }
+  if (value.endsWith("s") && value.length > 3) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
+function prettifyProviderLabel(provider) {
+  const raw = String(provider || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const aliasMap = {
+    aws: "AWS",
+    azure: "Azure",
+    gcp: "GCP",
+    ibm: "IBM",
+    vmware: "VMware",
+  };
+
+  const alias = aliasMap[raw.toLowerCase()];
+  if (alias) {
+    return alias;
+  }
+
+  return titleCase(toReadableWords(raw));
+}
+
+function prettifyItemTypeLabel(itemType) {
+  const raw = String(itemType || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  let normalized = raw;
+  if (normalized.includes("/")) {
+    const parts = normalized.split("/").filter(Boolean);
+    normalized = parts[parts.length - 1] || normalized;
+  }
+
+  if (normalized.includes(".")) {
+    const parts = normalized.split(".").filter(Boolean);
+    normalized = parts.length >= 2 ? parts.slice(-2).join(" ") : parts[0];
+  }
+
+  normalized = singularizeTail(normalized);
+  return titleCase(toReadableWords(normalized));
+}
+
+function prettifyAttributeKey(key) {
+  return titleCase(toReadableWords(key));
+}
+
+function formatCellValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value.join(", ");
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function setInventoryItemTypeOptions(provider = "", selectedValue = "") {
+  if (!inventoryItemTypeFilter) {
+    return;
+  }
+
+  const source = provider && inventoryProviderTypeMap[provider]
+    ? inventoryProviderTypeMap[provider]
+    : inventoryAllItemTypes;
+
+  const itemTypes = Array.isArray(source) ? source : [];
+  inventoryItemTypeFilter.innerHTML = '<option value="">All item types</option>';
+
+  itemTypes.forEach((itemType) => {
+    const option = document.createElement("option");
+    option.value = itemType;
+    option.textContent = prettifyItemTypeLabel(itemType);
+    inventoryItemTypeFilter.appendChild(option);
+  });
+
+  if (selectedValue && itemTypes.includes(selectedValue)) {
+    inventoryItemTypeFilter.value = selectedValue;
+  }
 }
 
 function toggleSecretRefProviderPanels() {
@@ -887,17 +1027,54 @@ async function refreshRuns() {
   runsPanel.textContent = JSON.stringify(runs, null, 2);
 }
 
-async function refreshInventory(provider = "", itemType = "", search = "") {
+async function refreshInventoryFilterOptions() {
+  if (!inventoryProviderFilter || !inventoryItemTypeFilter) {
+    return;
+  }
+
+  const previousProvider = String(inventoryProviderFilter.value || "");
+  const previousItemType = String(inventoryItemTypeFilter.value || "");
+
+  const options = await apiFetch("/api/inventory/filter-options");
+  const providers = Array.isArray(options.providers) ? options.providers : [];
+  const providerTypeMap = options.provider_item_types && typeof options.provider_item_types === "object"
+    ? options.provider_item_types
+    : {};
+  const allItemTypes = Array.isArray(options.item_types) ? options.item_types : [];
+
+  inventoryProviderTypeMap = providerTypeMap;
+  inventoryAllItemTypes = allItemTypes;
+
+  inventoryProviderFilter.innerHTML = '<option value="">All providers</option>';
+  providers.forEach((provider) => {
+    const option = document.createElement("option");
+    option.value = provider;
+    option.textContent = prettifyProviderLabel(provider);
+    inventoryProviderFilter.appendChild(option);
+  });
+
+  if (previousProvider && providers.includes(previousProvider)) {
+    inventoryProviderFilter.value = previousProvider;
+  }
+
+  setInventoryItemTypeOptions(String(inventoryProviderFilter.value || ""), previousItemType);
+}
+
+async function refreshInventory(provider, itemType, search) {
+  const resolvedProvider = provider !== undefined ? provider : String(inventoryProviderFilter?.value || "");
+  const resolvedItemType = itemType !== undefined ? itemType : String(inventoryItemTypeFilter?.value || "");
+  const resolvedSearch = search !== undefined ? search : String(inventoryFilterForm?.elements?.search?.value || "");
+
   const params = new URLSearchParams();
   params.set("limit", "300");
-  if (provider) {
-    params.set("provider", provider);
+  if (resolvedProvider) {
+    params.set("provider", resolvedProvider);
   }
-  if (itemType) {
-    params.set("item_type", itemType);
+  if (resolvedItemType) {
+    params.set("item_type", resolvedItemType);
   }
-  if (search) {
-    params.set("search", search);
+  if (resolvedSearch) {
+    params.set("search", resolvedSearch);
   }
 
   const items = await apiFetch(`/api/inventory/items?${params.toString()}`);
@@ -907,23 +1084,79 @@ async function refreshInventory(provider = "", itemType = "", search = "") {
     return;
   }
 
+  const baseColumns = [
+    { key: "provider", label: "Provider" },
+    { key: "item_type", label: "Type" },
+    { key: "name", label: "Name" },
+    { key: "region", label: "Region" },
+    { key: "item_key", label: "Resource Key" },
+    { key: "parent_key", label: "Parent" },
+    { key: "discovered_at", label: "Discovered" },
+  ];
+
   if (!Array.isArray(items) || !items.length) {
-    inventoryTableBody.innerHTML = '<tr><td colspan="7" class="empty-cell">No inventory items found.</td></tr>';
+    if (inventoryTableHead) {
+      inventoryTableHead.innerHTML = `<tr>${baseColumns.map((column) => `<th>${column.label}</th>`).join("")}</tr>`;
+    }
+    inventoryTableBody.innerHTML = `<tr><td colspan="${baseColumns.length}" class="empty-cell">No inventory items found.</td></tr>`;
     return;
+  }
+
+  const attributeKeys = Array.from(
+    new Set(
+      items.flatMap((item) => {
+        if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
+          return [];
+        }
+        return Object.keys(item.attributes);
+      }),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+
+  const columns = [
+    ...baseColumns,
+    ...attributeKeys.map((key) => ({
+      key: `attr:${key}`,
+      label: prettifyAttributeKey(key),
+      attributeKey: key,
+    })),
+  ];
+
+  if (inventoryTableHead) {
+    const headers = columns
+      .map((column) => `<th title="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>`)
+      .join("");
+    inventoryTableHead.innerHTML = `<tr>${headers}</tr>`;
   }
 
   const rows = items
     .map((item) => {
       const discovered = item.discovered_at ? new Date(item.discovered_at).toLocaleString() : "";
+      const attributes = item && typeof item.attributes === "object" && item.attributes !== null && !Array.isArray(item.attributes)
+        ? item.attributes
+        : {};
+
+      const values = [
+        prettifyProviderLabel(item.provider || ""),
+        prettifyItemTypeLabel(item.item_type || ""),
+        item.name || "",
+        item.region || "",
+        item.item_key || "",
+        item.parent_key || "",
+        discovered,
+        ...attributeKeys.map((key) => formatCellValue(attributes[key])),
+      ];
+
+      const cells = values
+        .map((value) => {
+          const safeValue = escapeHtml(value);
+          return `<td title="${safeValue}">${safeValue}</td>`;
+        })
+        .join("");
+
       return `
         <tr>
-          <td>${item.provider || ""}</td>
-          <td>${item.item_type || ""}</td>
-          <td>${item.name || ""}</td>
-          <td>${item.region || ""}</td>
-          <td title="${item.item_key || ""}">${item.item_key || ""}</td>
-          <td title="${item.parent_key || ""}">${item.parent_key || ""}</td>
-          <td>${discovered}</td>
+          ${cells}
         </tr>
       `;
     })
@@ -1124,10 +1357,9 @@ refreshRunsBtn.addEventListener("click", async () => {
 
 inventoryFilterForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const fd = new FormData(inventoryFilterForm);
-  const provider = String(fd.get("provider") || "").trim();
-  const itemType = String(fd.get("item_type") || "").trim();
-  const search = String(fd.get("search") || "").trim();
+  const provider = String(inventoryProviderFilter?.value || "").trim();
+  const itemType = String(inventoryItemTypeFilter?.value || "").trim();
+  const search = String(inventoryFilterForm.elements.search?.value || "").trim();
 
   try {
     await refreshInventory(provider, itemType, search);
@@ -1136,6 +1368,12 @@ inventoryFilterForm.addEventListener("submit", async (event) => {
     logActivity(String(error));
   }
 });
+
+if (inventoryProviderFilter) {
+  inventoryProviderFilter.addEventListener("change", () => {
+    setInventoryItemTypeOptions(String(inventoryProviderFilter.value || ""));
+  });
+}
 
 refreshModelsBtn.addEventListener("click", async () => {
   try {
