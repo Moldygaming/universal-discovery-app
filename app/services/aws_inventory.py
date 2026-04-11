@@ -1,0 +1,100 @@
+from typing import Dict, List, Optional
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
+
+
+def _list_regions(session: boto3.Session) -> List[str]:
+    ec2 = session.client("ec2", region_name="us-east-1")
+    response = ec2.describe_regions(AllRegions=True)
+    return [region["RegionName"] for region in response.get("Regions", [])]
+
+
+def discover_aws_resources(
+    access_key_id: str,
+    secret_access_key: str,
+    session_token: Optional[str] = None,
+    regions: Optional[List[str]] = None,
+    max_resources_per_region: int = 2000,
+) -> Dict[str, object]:
+    session = boto3.Session(
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        aws_session_token=session_token,
+    )
+
+    selected_regions = regions or _list_regions(session)
+    inventory_regions = []
+    warnings: List[str] = []
+
+    s3_buckets = []
+    try:
+        s3 = session.client("s3")
+        s3_response = s3.list_buckets()
+        s3_buckets = [bucket.get("Name") for bucket in s3_response.get("Buckets", [])]
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(f"S3 list failed: {exc}")
+
+    for region in selected_regions:
+        ec2_instances = []
+        rds_instances = []
+
+        try:
+            ec2 = session.client("ec2", region_name=region)
+            paginator = ec2.get_paginator("describe_instances")
+            for page in paginator.paginate(PaginationConfig={"PageSize": 100}):
+                for reservation in page.get("Reservations", []):
+                    for instance in reservation.get("Instances", []):
+                        ec2_instances.append(
+                            {
+                                "instance_id": instance.get("InstanceId"),
+                                "state": instance.get("State", {}).get("Name"),
+                                "type": instance.get("InstanceType"),
+                                "private_ip": instance.get("PrivateIpAddress"),
+                                "vpc_id": instance.get("VpcId"),
+                            }
+                        )
+                        if len(ec2_instances) >= max_resources_per_region:
+                            break
+                    if len(ec2_instances) >= max_resources_per_region:
+                        break
+                if len(ec2_instances) >= max_resources_per_region:
+                    break
+        except (BotoCoreError, ClientError) as exc:
+            warnings.append(f"EC2 list failed in {region}: {exc}")
+
+        try:
+            rds = session.client("rds", region_name=region)
+            paginator = rds.get_paginator("describe_db_instances")
+            for page in paginator.paginate(PaginationConfig={"PageSize": 100}):
+                for db in page.get("DBInstances", []):
+                    rds_instances.append(
+                        {
+                            "db_instance_identifier": db.get("DBInstanceIdentifier"),
+                            "engine": db.get("Engine"),
+                            "status": db.get("DBInstanceStatus"),
+                            "class": db.get("DBInstanceClass"),
+                            "endpoint": (db.get("Endpoint") or {}).get("Address"),
+                        }
+                    )
+                    if len(rds_instances) >= max_resources_per_region:
+                        break
+                if len(rds_instances) >= max_resources_per_region:
+                    break
+        except (BotoCoreError, ClientError) as exc:
+            warnings.append(f"RDS list failed in {region}: {exc}")
+
+        inventory_regions.append(
+            {
+                "region": region,
+                "ec2_instances": ec2_instances,
+                "rds_instances": rds_instances,
+            }
+        )
+
+    return {
+        "regions_scanned": len(inventory_regions),
+        "regions": inventory_regions,
+        "s3_buckets": s3_buckets,
+        "warnings": warnings,
+    }

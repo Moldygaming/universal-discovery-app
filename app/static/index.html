@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Universal Discovery App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">Server Discovery Platform</p>
+        <h1>Universal Discovery Server Console</h1>
+        <p>
+          Schedule recurring scans, review inventory findings, manage users, and inspect service-model
+          relationships from one interface.
+        </p>
+      </header>
+
+      <section id="authPanel" class="card" data-reveal>
+        <h2>Sign In</h2>
+        <form id="loginForm">
+          <div class="inline two">
+            <label>Username
+              <input name="username" required />
+            </label>
+            <label>Password
+              <input type="password" name="password" required />
+            </label>
+          </div>
+          <div class="actions-row">
+            <button type="submit">Local Login</button>
+            <a class="button-link" href="/api/auth/entra/login">Sign In With Microsoft Entra ID</a>
+          </div>
+        </form>
+        <p class="hint">
+          First-time setup default admin: <code>admin / Admin123£</code>. You will be forced to change the password on first login.
+        </p>
+
+        <section id="passwordChangePanel" class="hidden password-change-panel">
+          <h3>Password Change Required</h3>
+          <p class="hint">
+            Your account requires a password update before you can access inventory or admin features.
+          </p>
+          <form id="changePasswordForm">
+            <div class="inline two">
+              <label>Current Password
+                <input type="password" name="current_password" required />
+              </label>
+              <label>New Password
+                <input type="password" name="new_password" required />
+              </label>
+            </div>
+            <label>Confirm New Password
+              <input type="password" name="confirm_new_password" required />
+            </label>
+            <button type="submit">Change Password</button>
+          </form>
+        </section>
+      </section>
+
+      <section id="appPanel" class="hidden">
+        <div class="tabbar" data-reveal>
+          <button class="tab active" data-tab="inventory">Inventory</button>
+          <button class="tab" data-tab="service-models">Service Models</button>
+          <button class="tab admin-only" data-tab="admin">Admin Console</button>
+          <a class="tab linkish" href="/guide" target="_blank">User Guide</a>
+          <button id="logoutBtn" class="tab danger">Logout</button>
+        </div>
+
+        <section class="grid tab-view" id="view-inventory">
+          <article class="card" data-reveal>
+            <h2>Recent Scan Runs</h2>
+            <button id="refreshRunsBtn">Refresh Runs</button>
+            <pre id="runsPanel">No scan runs loaded.</pre>
+          </article>
+          <article class="card" data-reveal>
+            <h2>Inventory Items</h2>
+            <form id="inventoryFilterForm">
+              <div class="inline three">
+                <label>Provider
+                  <input name="provider" placeholder="aws / azure / network" />
+                </label>
+                <label>Item Type
+                  <input name="item_type" placeholder="aws.ec2.instance" />
+                </label>
+                <label>Search
+                  <input name="search" placeholder="name or key" />
+                </label>
+              </div>
+              <button type="submit">Load Inventory</button>
+            </form>
+            <pre id="inventoryPanel">No inventory loaded.</pre>
+          </article>
+        </section>
+
+        <section class="grid tab-view hidden" id="view-service-models">
+          <article class="card" data-reveal>
+            <h2>Service Model Overview</h2>
+            <button id="refreshModelsBtn">Refresh Model</button>
+            <pre id="modelsPanel">No service model loaded.</pre>
+          </article>
+        </section>
+
+        <section class="grid tab-view hidden" id="view-admin">
+          <article class="card" data-reveal>
+            <h2>Create Scan Profile</h2>
+            <form id="profileForm">
+              <p id="profileEditBanner" class="hint hidden">Editing profile</p>
+              <label>Profile Name
+                <input name="name" required />
+              </label>
+              <div class="inline three">
+                <label>Scan Type
+                  <select id="profileScanType" name="scan_type">
+                    <option value="icmp">icmp</option>
+                    <option value="snmp">snmp</option>
+                    <option value="azure">azure</option>
+                    <option value="aws">aws</option>
+                  </select>
+                </label>
+                <label>Schedule Minutes
+                  <input name="schedule_minutes" type="number" value="60" min="1" max="10080" />
+                </label>
+                <label>Enabled
+                  <select name="is_enabled">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+              </div>
+              <label>Config JSON
+                <textarea id="profileConfigInput" name="config" rows="12" required>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</textarea>
+              </label>
+              <p class="hint">
+                For secret fields use <code>$secret</code> references, e.g. Azure: <code>{"$secret":{"provider":"azure_key_vault","vault_url":"https://my-vault.vault.azure.net/","name":"discovery-client-secret"}}</code>
+              </p>
+              <div class="actions-inline">
+                <button id="saveProfileBtn" type="submit">Save Profile</button>
+                <button id="cancelEditProfileBtn" class="secondary hidden" type="button">Cancel Edit</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="card" data-reveal>
+            <h2>Secret Reference Builder</h2>
+            <form id="secretBuilderForm">
+              <div class="inline two">
+                <label>Target Field
+                  <select id="secretTargetField" name="target_field"></select>
+                </label>
+                <label>Custom Path (optional)
+                  <input id="secretTargetPath" name="target_path" placeholder="auth.client_secret" />
+                </label>
+              </div>
+
+              <label>Secret Provider
+                <select id="secretProvider" name="provider">
+                  <option value="env">env</option>
+                  <option value="azure_key_vault">azure_key_vault</option>
+                  <option value="aws_secrets_manager">aws_secrets_manager</option>
+                </select>
+              </label>
+
+              <div id="providerEnv" class="provider-panel">
+                <label>Environment Variable Key
+                  <input name="env_key" placeholder="SNMP_COMMUNITY" />
+                </label>
+              </div>
+
+              <div id="providerAzure" class="provider-panel hidden">
+                <label>Vault URL
+                  <input name="azure_vault_url" placeholder="https://my-vault.vault.azure.net/" />
+                </label>
+                <div class="inline two">
+                  <label>Secret Name
+                    <input name="azure_name" placeholder="discovery-client-secret" />
+                  </label>
+                  <label>Version (optional)
+                    <input name="azure_version" placeholder="version-guid" />
+                  </label>
+                </div>
+              </div>
+
+              <div id="providerAws" class="provider-panel hidden">
+                <label>Secret ID
+                  <input name="aws_secret_id" placeholder="discovery/aws" />
+                </label>
+                <div class="inline two">
+                  <label>Region
+                    <input name="aws_region" placeholder="us-east-1" />
+                  </label>
+                  <label>JSON Key (optional)
+                    <input name="aws_json_key" placeholder="secret_access_key" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="actions-inline">
+                <button id="previewSecretBtn" type="button" class="secondary">Preview Reference</button>
+                <button id="insertSecretBtn" type="button">Insert Into Config</button>
+                <button id="copySecretBtn" type="button" class="secondary">Copy Reference JSON</button>
+              </div>
+              <pre id="secretRefPreview" class="compact-pre">No secret reference generated yet.</pre>
+            </form>
+          </article>
+
+          <article class="card" data-reveal>
+            <h2>Scan Profiles</h2>
+            <button id="refreshProfilesBtn">Refresh Profiles</button>
+            <div id="profilesPanel" class="list-panel"></div>
+          </article>
+
+          <article class="card" data-reveal>
+            <h2>User Management</h2>
+            <form id="userForm">
+              <div class="inline two">
+                <label>Username
+                  <input name="username" required />
+                </label>
+                <label>Email
+                  <input name="email" />
+                </label>
+              </div>
+              <div class="inline three">
+                <label>Password
+                  <input name="password" type="password" />
+                </label>
+                <label>Role
+                  <select name="role">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <label>Provider
+                  <select name="provider">
+                    <option value="local">local</option>
+                    <option value="entra">entra</option>
+                  </select>
+                </label>
+              </div>
+              <label>Entra OID (required for Entra provider)
+                <input name="entra_oid" />
+              </label>
+              <button type="submit">Create User</button>
+            </form>
+            <button id="refreshUsersBtn">Refresh Users</button>
+            <pre id="usersPanel">No users loaded.</pre>
+          </article>
+        </section>
+      </section>
+
+      <section class="results" data-reveal>
+        <div class="results-header">
+          <h2>Activity</h2>
+          <button id="clearActivityBtn" class="secondary">Clear</button>
+        </div>
+        <pre id="activityPanel">Ready.</pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

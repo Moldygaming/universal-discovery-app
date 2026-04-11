@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Universal Discovery User Guide</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: #f3f6f3;
+        color: #1f2b22;
+      }
+      .wrap {
+        max-width: 940px;
+        margin: 2rem auto;
+        padding: 0 1rem 2rem;
+      }
+      h1, h2 {
+        color: #195d45;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #d9e1da;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      code {
+        background: #f4f7f4;
+        padding: 0.1rem 0.3rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Universal Discovery Server User Guide</h1>
+
+      <div class="card">
+        <h2>1. Sign In</h2>
+        <p>
+          Use local credentials through the login form, or click Microsoft Entra ID sign-in if SSO is configured.
+        </p>
+        <p>
+          Default first-run local admin is <code>admin</code> with password <code>Admin123£</code>. You must
+          change this password immediately on first login before accessing inventory and admin features.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>2. Inventory View</h2>
+        <p>
+          Open the <strong>Inventory</strong> tab to review recent scan runs and discovered configuration items.
+          You can filter by provider, item type, or free-text search.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>3. Service Models View</h2>
+        <p>
+          Open <strong>Service Models</strong> to view a relationship overview generated from discovered inventory.
+          Parent-child links are inferred from metadata such as resource groups and VPC context.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>4. Admin Console</h2>
+        <p>Admins can:</p>
+        <ul>
+          <li>Create scan profiles with scan type, schedule interval, and JSON config.</li>
+          <li>Run scan profiles on demand.</li>
+          <li>Create local and Entra-linked users.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>5. Scan Configuration JSON Examples</h2>
+        <p>ICMP profile config:</p>
+        <p><code>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</code></p>
+        <p>SNMP profile config:</p>
+        <p><code>{"target":"10.0.0.0/24","community":{"$secret":{"provider":"env","key":"SNMP_COMMUNITY"}},"version":"2c","oid":"1.3.6.1.2.1.1.1.0"}</code></p>
+        <p>Azure profile config:</p>
+        <p><code>{"tenant_id":"...","client_id":"...","client_secret":{"$secret":{"provider":"azure_key_vault","vault_url":"https://my-vault.vault.azure.net/","name":"discovery-client-secret"}},"subscription_ids":["sub-id"]}</code></p>
+        <p>AWS profile config:</p>
+        <p><code>{"access_key_id":"...","secret_access_key":{"$secret":{"provider":"aws_secrets_manager","region":"us-east-1","secret_id":"discovery/aws","json_key":"secret_access_key"}},"regions":["us-east-1"]}</code></p>
+      </div>
+
+      <div class="card">
+        <h2>6. Secret Provider Reference Formats</h2>
+        <p>Environment variable provider:</p>
+        <p><code>{"$secret":{"provider":"env","key":"MY_SECRET"}}</code></p>
+        <p>Azure Key Vault provider:</p>
+        <p><code>{"$secret":{"provider":"azure_key_vault","vault_url":"https://my-vault.vault.azure.net/","name":"secret-name","version":"optional-version"}}</code></p>
+        <p>AWS Secrets Manager provider:</p>
+        <p><code>{"$secret":{"provider":"aws_secrets_manager","region":"us-east-1","secret_id":"my/secret","json_key":"optional-field"}}</code></p>
+        <p>
+          In the Admin Console, use <strong>Secret Reference Builder</strong> to generate these references and
+          insert them directly into profile config JSON.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>7. Security Notes</h2>
+        <p>
+          Keep production credentials in a secure secret store and avoid embedding long-lived secrets directly in
+          profile JSON. Configure HTTPS and rotate app credentials regularly.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
