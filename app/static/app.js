@@ -29,7 +29,7 @@ const inventoryViewMode = document.getElementById("inventoryViewMode");
 const adminBladeItems = Array.from(document.querySelectorAll(".admin-blade-item"));
 const adminPanes = Array.from(document.querySelectorAll(".admin-pane"));
 const modelsPanel = document.getElementById("modelsPanel");
-const usersPanel = document.getElementById("usersPanel");
+const usersListPanel = document.getElementById("usersListPanel");
 const profilesPanel = document.getElementById("profilesPanel");
 
 const refreshRunsBtn = document.getElementById("refreshRunsBtn");
@@ -45,13 +45,16 @@ const cancelEditProfileBtn = document.getElementById("cancelEditProfileBtn");
 const profileEditBanner = document.getElementById("profileEditBanner");
 
 const profileScanType = document.getElementById("profileScanType");
+const profileQuickSettings = document.getElementById("profileQuickSettings");
 const profileConfigInput = document.getElementById("profileConfigInput");
 const azureTenantsPanel = document.getElementById("azureTenantsPanel");
 const awsAccountsPanel = document.getElementById("awsAccountsPanel");
+const gcpAccountsPanel = document.getElementById("gcpAccountsPanel");
 const secretRefsPanel = document.getElementById("secretRefsPanel");
 const refreshCloudConfigBtn = document.getElementById("refreshCloudConfigBtn");
 const openAzureTenantModalBtn = document.getElementById("openAzureTenantModalBtn");
 const openAwsAccountModalBtn = document.getElementById("openAwsAccountModalBtn");
+const openGcpAccountModalBtn = document.getElementById("openGcpAccountModalBtn");
 const openSecretRefModalBtn = document.getElementById("openSecretRefModalBtn");
 const azureTenantModal = document.getElementById("azureTenantModal");
 const azureTenantModalTitle = document.getElementById("azureTenantModalTitle");
@@ -85,11 +88,25 @@ const awsAccessKeyIdInput = document.getElementById("awsAccessKeyIdInput");
 const awsSecretAccessKeyInput = document.getElementById("awsSecretAccessKeyInput");
 const awsRoleArnInput = document.getElementById("awsRoleArnInput");
 const awsExternalIdInput = document.getElementById("awsExternalIdInput");
-const azureProfileWizardModal = document.getElementById("azureProfileWizardModal");
-const closeAzureProfileWizardModalBtn = document.getElementById("closeAzureProfileWizardModalBtn");
-const azureProfileWizardForm = document.getElementById("azureProfileWizardForm");
-const wizardTenantLabel = document.getElementById("wizardTenantLabel");
-const wizardProfileName = document.getElementById("wizardProfileName");
+const gcpAccountModal = document.getElementById("gcpAccountModal");
+const gcpAccountModalTitle = document.getElementById("gcpAccountModalTitle");
+const saveGcpAccountBtn = document.getElementById("saveGcpAccountBtn");
+const closeGcpAccountModalBtn = document.getElementById("closeGcpAccountModalBtn");
+const gcpAccountForm = document.getElementById("gcpAccountForm");
+const gcpServiceAccountMode = document.getElementById("gcpServiceAccountMode");
+const gcpServiceAccountRefPanel = document.getElementById("gcpServiceAccountRefPanel");
+const gcpServiceAccountInlinePanel = document.getElementById("gcpServiceAccountInlinePanel");
+const gcpServiceAccountRefSelect = document.getElementById("gcpServiceAccountRefSelect");
+const gcpInlineServiceAccountJsonInput = document.getElementById("gcpInlineServiceAccountJsonInput");
+const ssoConfigForm = document.getElementById("ssoConfigForm");
+const ssoClientSecretMode = document.getElementById("ssoClientSecretMode");
+const ssoClientSecretRefSelect = document.getElementById("ssoClientSecretRefSelect");
+const ssoSecretRefPanel = document.getElementById("ssoSecretRefPanel");
+const ssoInlineSecretPanel = document.getElementById("ssoInlineSecretPanel");
+const ssoInlineClientSecretInput = document.getElementById("ssoInlineClientSecretInput");
+const saveSsoConfigBtn = document.getElementById("saveSsoConfigBtn");
+const refreshSsoConfigBtn = document.getElementById("refreshSsoConfigBtn");
+const ssoConfigSummary = document.getElementById("ssoConfigSummary");
 const secretRefModal = document.getElementById("secretRefModal");
 const secretRefModalTitle = document.getElementById("secretRefModalTitle");
 const saveSecretRefBtn = document.getElementById("saveSecretRefBtn");
@@ -117,6 +134,15 @@ const sensitiveFieldMap = {
   snmp: ["community", "target"],
   azure: ["client_secret", "tenant_id", "client_id"],
   aws: ["secret_access_key", "session_token", "access_key_id"],
+  gcp: ["service_account_json"],
+};
+
+const profileConfigKnownKeysByType = {
+  icmp: ["target", "timeout_seconds", "concurrency", "max_hosts"],
+  snmp: ["target", "community", "version", "oid", "port", "timeout_seconds", "concurrency", "max_hosts"],
+  azure: ["tenant_config_id", "max_resources_per_subscription"],
+  aws: ["aws_account_id", "max_resources_per_region"],
+  gcp: ["gcp_account_id", "max_resources_per_project"],
 };
 
 let accessToken = null;
@@ -125,11 +151,15 @@ let profileEditId = null;
 let secretReferences = [];
 let azureTenants = [];
 let awsAccounts = [];
+let gcpAccounts = [];
 let secretRefEditId = null;
 let azureTenantEditId = null;
 let awsAccountEditId = null;
-let wizardTenantId = null;
+let gcpAccountEditId = null;
 let azureTenantCurrentSecretSource = null;
+let gcpAccountCurrentSecretSource = null;
+let ssoConfig = null;
+let ssoCurrentSecretSource = "none";
 let inventoryProviderTypeMap = {};
 let inventoryAllItemTypes = [];
 let inventoryLatestItems = [];
@@ -137,6 +167,317 @@ let inventoryVisibleItemTypes = {};
 let inventoryVisibleAttributes = {};
 let activeAdminPane = "cloud-accounts";
 let scanProfiles = [];
+
+function defaultProfileConfig(scanType) {
+  if (scanType === "snmp") {
+    return {
+      target: "10.0.0.0/24",
+      community: "public",
+      version: "2c",
+      oid: "1.3.6.1.2.1.1.1.0",
+      port: 161,
+      timeout_seconds: 1,
+      concurrency: 100,
+      max_hosts: 1024,
+    };
+  }
+
+  if (scanType === "azure") {
+    return {
+      tenant_config_id: null,
+      max_resources_per_subscription: 2000,
+    };
+  }
+
+  if (scanType === "aws") {
+    return {
+      aws_account_id: null,
+      max_resources_per_region: 2000,
+    };
+  }
+
+  if (scanType === "gcp") {
+    return {
+      gcp_account_id: null,
+      max_resources_per_project: 2000,
+    };
+  }
+
+  return {
+    target: "10.0.0.0/24",
+    timeout_seconds: 1,
+    concurrency: 100,
+    max_hosts: 1024,
+  };
+}
+
+function parseProfileConfigInput() {
+  if (!profileConfigInput) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(String(profileConfigInput.value || "{}"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeProfileConfigInput(config) {
+  if (!profileConfigInput) {
+    return;
+  }
+  profileConfigInput.value = JSON.stringify(config || {}, null, 2);
+}
+
+function mergeGeneratedProfileConfig(scanType, generatedConfig) {
+  const existing = parseProfileConfigInput();
+  if (!existing) {
+    return generatedConfig;
+  }
+
+  const knownKeys = new Set(profileConfigKnownKeysByType[scanType] || []);
+  const preserved = {};
+
+  Object.entries(existing).forEach(([key, value]) => {
+    if (!knownKeys.has(key)) {
+      preserved[key] = value;
+    }
+  });
+
+  return {
+    ...preserved,
+    ...generatedConfig,
+  };
+}
+
+function numberOrDefault(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildProfileConfigFromQuickSettings(scanType) {
+  if (!profileQuickSettings) {
+    return defaultProfileConfig(scanType);
+  }
+
+  const getValue = (name) => String(profileQuickSettings.querySelector(`[name="${name}"]`)?.value || "").trim();
+
+  if (scanType === "snmp") {
+    return {
+      target: getValue("snmp_target") || "10.0.0.0/24",
+      community: getValue("snmp_community") || "public",
+      version: getValue("snmp_version") || "2c",
+      oid: getValue("snmp_oid") || "1.3.6.1.2.1.1.1.0",
+      port: numberOrDefault(getValue("snmp_port"), 161),
+      timeout_seconds: numberOrDefault(getValue("snmp_timeout_seconds"), 1),
+      concurrency: numberOrDefault(getValue("snmp_concurrency"), 100),
+      max_hosts: numberOrDefault(getValue("snmp_max_hosts"), 1024),
+    };
+  }
+
+  if (scanType === "azure") {
+    const tenantConfigId = Number(getValue("azure_tenant_config_id"));
+    const config = {
+      max_resources_per_subscription: numberOrDefault(getValue("azure_max_resources_per_subscription"), 2000),
+    };
+    if (Number.isInteger(tenantConfigId) && tenantConfigId > 0) {
+      config.tenant_config_id = tenantConfigId;
+    }
+    return config;
+  }
+
+  if (scanType === "aws") {
+    const awsAccountId = Number(getValue("aws_account_id"));
+    const config = {
+      max_resources_per_region: numberOrDefault(getValue("aws_max_resources_per_region"), 2000),
+    };
+    if (Number.isInteger(awsAccountId) && awsAccountId > 0) {
+      config.aws_account_id = awsAccountId;
+    }
+    return config;
+  }
+
+  if (scanType === "gcp") {
+    const gcpAccountId = Number(getValue("gcp_account_id"));
+    const config = {
+      max_resources_per_project: numberOrDefault(getValue("gcp_max_resources_per_project"), 2000),
+    };
+    if (Number.isInteger(gcpAccountId) && gcpAccountId > 0) {
+      config.gcp_account_id = gcpAccountId;
+    }
+    return config;
+  }
+
+  return {
+    target: getValue("icmp_target") || "10.0.0.0/24",
+    timeout_seconds: numberOrDefault(getValue("icmp_timeout_seconds"), 1),
+    concurrency: numberOrDefault(getValue("icmp_concurrency"), 100),
+    max_hosts: numberOrDefault(getValue("icmp_max_hosts"), 1024),
+  };
+}
+
+function applyQuickSettingsToProfileConfig() {
+  const scanType = String(profileScanType?.value || "icmp");
+  const generated = buildProfileConfigFromQuickSettings(scanType);
+  const merged = mergeGeneratedProfileConfig(scanType, generated);
+  writeProfileConfigInput(merged);
+  refreshTargetFieldOptions();
+}
+
+function renderProfileQuickSettings() {
+  if (!profileQuickSettings || !profileScanType) {
+    return;
+  }
+
+  const scanType = String(profileScanType.value || "icmp");
+  const parsed = parseProfileConfigInput();
+  const defaults = defaultProfileConfig(scanType);
+  const config = parsed ? { ...defaults, ...parsed } : defaults;
+
+  if (scanType === "azure") {
+    const tenantOptions = [
+      '<option value="">-- select Azure tenant config --</option>',
+      ...azureTenants.map((tenant) => {
+        const selected = Number(config.tenant_config_id) === Number(tenant.id) ? "selected" : "";
+        return `<option value="${tenant.id}" ${selected}>${escapeHtml(tenant.name)} (${escapeHtml(tenant.tenant_id)})</option>`;
+      }),
+    ].join("");
+
+    profileQuickSettings.innerHTML = `
+      <p class="profile-quick-title">Cloud Settings (Azure)</p>
+      <div class="inline two">
+        <label>Tenant Config
+          <select name="azure_tenant_config_id" data-profile-setting>${tenantOptions}</select>
+        </label>
+        <label>Max Resources / Subscription
+          <input name="azure_max_resources_per_subscription" type="number" min="1" max="50000" value="${escapeHtml(config.max_resources_per_subscription ?? 2000)}" data-profile-setting />
+        </label>
+      </div>
+    `;
+  } else if (scanType === "aws") {
+    const accountOptions = [
+      '<option value="">-- select AWS account config --</option>',
+      ...awsAccounts.map((account) => {
+        const selected = Number(config.aws_account_id) === Number(account.id) ? "selected" : "";
+        return `<option value="${account.id}" ${selected}>${escapeHtml(account.name)}</option>`;
+      }),
+    ].join("");
+
+    profileQuickSettings.innerHTML = `
+      <p class="profile-quick-title">Cloud Settings (AWS)</p>
+      <div class="inline two">
+        <label>AWS Account Config
+          <select name="aws_account_id" data-profile-setting>${accountOptions}</select>
+        </label>
+        <label>Max Resources / Region
+          <input name="aws_max_resources_per_region" type="number" min="1" max="50000" value="${escapeHtml(config.max_resources_per_region ?? 2000)}" data-profile-setting />
+        </label>
+      </div>
+    `;
+  } else if (scanType === "gcp") {
+    const accountOptions = [
+      '<option value="">-- select GCP account config --</option>',
+      ...gcpAccounts.map((account) => {
+        const selected = Number(config.gcp_account_id) === Number(account.id) ? "selected" : "";
+        return `<option value="${account.id}" ${selected}>${escapeHtml(account.name)}</option>`;
+      }),
+    ].join("");
+
+    profileQuickSettings.innerHTML = `
+      <p class="profile-quick-title">Cloud Settings (GCP)</p>
+      <div class="inline two">
+        <label>GCP Account Config
+          <select name="gcp_account_id" data-profile-setting>${accountOptions}</select>
+        </label>
+        <label>Max Resources / Project
+          <input name="gcp_max_resources_per_project" type="number" min="1" max="50000" value="${escapeHtml(config.max_resources_per_project ?? 2000)}" data-profile-setting />
+        </label>
+      </div>
+    `;
+  } else if (scanType === "snmp") {
+    profileQuickSettings.innerHTML = `
+      <p class="profile-quick-title">Network Settings (SNMP)</p>
+      <div class="inline two">
+        <label>Target Range / CIDR
+          <input name="snmp_target" value="${escapeHtml(config.target ?? "10.0.0.0/24")}" data-profile-setting />
+        </label>
+        <label>Protocol
+          <input value="snmp" disabled />
+        </label>
+      </div>
+      <div class="inline four">
+        <label>Community
+          <input name="snmp_community" value="${escapeHtml(config.community ?? "public")}" data-profile-setting />
+        </label>
+        <label>Version
+          <input name="snmp_version" value="${escapeHtml(config.version ?? "2c")}" data-profile-setting />
+        </label>
+        <label>OID
+          <input name="snmp_oid" value="${escapeHtml(config.oid ?? "1.3.6.1.2.1.1.1.0")}" data-profile-setting />
+        </label>
+        <label>Port
+          <input name="snmp_port" type="number" min="1" max="65535" value="${escapeHtml(config.port ?? 161)}" data-profile-setting />
+        </label>
+      </div>
+      <div class="inline three">
+        <label>Timeout Seconds
+          <input name="snmp_timeout_seconds" type="number" step="0.1" min="0.1" value="${escapeHtml(config.timeout_seconds ?? 1)}" data-profile-setting />
+        </label>
+        <label>Concurrency
+          <input name="snmp_concurrency" type="number" min="1" value="${escapeHtml(config.concurrency ?? 100)}" data-profile-setting />
+        </label>
+        <label>Max Hosts
+          <input name="snmp_max_hosts" type="number" min="1" value="${escapeHtml(config.max_hosts ?? 1024)}" data-profile-setting />
+        </label>
+      </div>
+    `;
+  } else {
+    profileQuickSettings.innerHTML = `
+      <p class="profile-quick-title">Network Settings (ICMP)</p>
+      <div class="inline two">
+        <label>Target Range / CIDR
+          <input name="icmp_target" value="${escapeHtml(config.target ?? "10.0.0.0/24")}" data-profile-setting />
+        </label>
+        <label>Protocol
+          <input value="icmp" disabled />
+        </label>
+      </div>
+      <div class="inline three">
+        <label>Timeout Seconds
+          <input name="icmp_timeout_seconds" type="number" step="0.1" min="0.1" value="${escapeHtml(config.timeout_seconds ?? 1)}" data-profile-setting />
+        </label>
+        <label>Concurrency
+          <input name="icmp_concurrency" type="number" min="1" value="${escapeHtml(config.concurrency ?? 100)}" data-profile-setting />
+        </label>
+        <label>Max Hosts
+          <input name="icmp_max_hosts" type="number" min="1" value="${escapeHtml(config.max_hosts ?? 1024)}" data-profile-setting />
+        </label>
+      </div>
+    `;
+  }
+
+  profileQuickSettings.querySelectorAll("[data-profile-setting]").forEach((element) => {
+    const handler = () => applyQuickSettingsToProfileConfig();
+    element.addEventListener("change", handler);
+    if (element.tagName === "INPUT") {
+      element.addEventListener("input", handler);
+    }
+  });
+}
+
+function setProfileConfigForScanType(scanType, initialConfig = null) {
+  const config = initialConfig && typeof initialConfig === "object" && !Array.isArray(initialConfig)
+    ? { ...defaultProfileConfig(scanType), ...initialConfig }
+    : defaultProfileConfig(scanType);
+  writeProfileConfigInput(config);
+  renderProfileQuickSettings();
+  refreshTargetFieldOptions();
+}
 
 function logActivity(value) {
   if (!activityPanel) {
@@ -235,6 +576,13 @@ function activateAdminPane(paneName) {
   adminPanes.forEach((pane) => {
     pane.classList.toggle("hidden", pane.dataset.adminPane !== resolvedPane);
   });
+
+  if (resolvedPane === "user-management" && currentUser?.role === "admin") {
+    refreshUsers().catch((error) => logActivity(String(error)));
+  }
+  if (resolvedPane === "sso-integration" && currentUser?.role === "admin") {
+    refreshSsoConfig().catch((error) => logActivity(String(error)));
+  }
 }
 
 function activateTab(tabName) {
@@ -299,20 +647,8 @@ function resetProfileForm() {
   if (profileScanType) {
     profileScanType.value = "icmp";
   }
-  if (profileConfigInput) {
-    profileConfigInput.value = JSON.stringify(
-      {
-        target: "10.0.0.0/24",
-        timeout_seconds: 1,
-        concurrency: 100,
-        max_hosts: 1024,
-      },
-      null,
-      2,
-    );
-  }
+  setProfileConfigForScanType("icmp");
   setProfileEditState(false);
-  refreshTargetFieldOptions();
 }
 
 async function loadAppData() {
@@ -324,12 +660,21 @@ async function loadAppData() {
   await refreshUsers();
   await refreshProfiles();
   await refreshCloudConfig();
+  await refreshSsoConfig();
 }
 
 function splitOptionalList(value) {
   const parsed = value
     .split(",")
     .map((item) => item.trim())
+    .filter(Boolean);
+  return parsed.length ? parsed : null;
+}
+
+function splitOptionalLowerList(value) {
+  const parsed = value
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
   return parsed.length ? parsed : null;
 }
@@ -856,6 +1201,14 @@ function renderInventoryCollectiveTable(items, emptyMessage = "No inventory item
       }
     }
 
+    if (provider === "gcp") {
+      const projectId = pickFirst(attributes.project_id, attributes.projectId);
+      if (projectId) {
+        const value = String(projectId).trim();
+        return { key: `project:${value}`, label: `Project ${value}` };
+      }
+    }
+
     const genericScope = pickFirst(attributes.tenant_id, attributes.subscription_id, attributes.account_id);
     if (genericScope) {
       const value = String(genericScope).trim();
@@ -1306,6 +1659,135 @@ function syncAwsSecretRefDropdowns() {
   populateSecretRefSelect(awsSessionTokenRefSelect, { allowEmpty: true, emptyLabel: "-- no session token --" });
 }
 
+function syncGcpSecretRefDropdown() {
+  populateSecretRefSelect(gcpServiceAccountRefSelect);
+}
+
+function syncSsoSecretRefDropdown() {
+  populateSecretRefSelect(ssoClientSecretRefSelect, { allowEmpty: true, emptyLabel: "-- none --" });
+}
+
+function toggleSsoSecretModePanels() {
+  const mode = String(ssoClientSecretMode?.value || "reference");
+  ssoSecretRefPanel?.classList.toggle("hidden", mode !== "reference");
+  ssoInlineSecretPanel?.classList.toggle("hidden", mode !== "inline_encrypted");
+}
+
+function setSsoConfigForm(config) {
+  ssoConfig = config || null;
+  ssoCurrentSecretSource = String(config?.client_secret_source || "none");
+
+  if (!ssoConfigForm) {
+    return;
+  }
+
+  ssoConfigForm.reset();
+  syncSsoSecretRefDropdown();
+
+  ssoConfigForm.elements.is_enabled.value = boolToSelectValue(Boolean(config?.is_enabled));
+  ssoConfigForm.elements.default_role.value = String(config?.default_role || "user");
+  ssoConfigForm.elements.tenant_id.value = String(config?.tenant_id || "");
+  ssoConfigForm.elements.client_id.value = String(config?.client_id || "");
+  ssoConfigForm.elements.redirect_uri.value = String(config?.redirect_uri || "");
+  ssoConfigForm.elements.role_claim_key.value = String(config?.role_claim_key || "groups");
+  ssoConfigForm.elements.admin_group_ids.value = Array.isArray(config?.admin_group_ids)
+    ? config.admin_group_ids.join(",")
+    : "";
+  ssoConfigForm.elements.user_group_ids.value = Array.isArray(config?.user_group_ids)
+    ? config.user_group_ids.join(",")
+    : "";
+  ssoConfigForm.elements.admin_emails.value = Array.isArray(config?.admin_emails)
+    ? config.admin_emails.join(",")
+    : "";
+
+  if (String(config?.client_secret_source || "none") === "encrypted") {
+    if (ssoClientSecretMode) {
+      ssoClientSecretMode.value = "inline_encrypted";
+    }
+    if (ssoInlineClientSecretInput) {
+      ssoInlineClientSecretInput.placeholder = "Leave blank to keep current encrypted secret";
+    }
+  } else {
+    if (ssoClientSecretMode) {
+      ssoClientSecretMode.value = "reference";
+    }
+    ssoConfigForm.elements.client_secret_ref_id.value = config?.client_secret_ref_id != null
+      ? String(config.client_secret_ref_id)
+      : "";
+    if (ssoInlineClientSecretInput) {
+      ssoInlineClientSecretInput.placeholder = "Enter Entra app client secret";
+    }
+  }
+
+  toggleSsoSecretModePanels();
+
+  if (ssoConfigSummary) {
+    ssoConfigSummary.textContent = JSON.stringify(config || { source: "disabled" }, null, 2);
+  }
+}
+
+async function refreshSsoConfig() {
+  if (currentUser?.role !== "admin") {
+    return;
+  }
+
+  const config = await apiFetch("/api/admin/sso-config");
+  setSsoConfigForm(config);
+}
+
+function toggleGcpServiceAccountPanels() {
+  const mode = String(gcpServiceAccountMode?.value || "reference");
+  gcpServiceAccountRefPanel?.classList.toggle("hidden", mode !== "reference");
+  gcpServiceAccountInlinePanel?.classList.toggle("hidden", mode !== "inline_encrypted");
+}
+
+function setGcpAccountModalState(editing, account = null) {
+  gcpAccountEditId = editing && account ? account.id : null;
+  gcpAccountCurrentSecretSource = editing && account ? account.service_account_source : null;
+
+  if (gcpAccountModalTitle) {
+    gcpAccountModalTitle.textContent = editing ? "Edit GCP Account" : "Configure GCP Account";
+  }
+  if (saveGcpAccountBtn) {
+    saveGcpAccountBtn.textContent = editing ? "Update GCP Account" : "Save GCP Account";
+  }
+
+  gcpAccountForm?.reset();
+  syncGcpSecretRefDropdown();
+  if (gcpServiceAccountMode) {
+    gcpServiceAccountMode.value = "reference";
+  }
+  if (gcpInlineServiceAccountJsonInput) {
+    gcpInlineServiceAccountJsonInput.placeholder = '{"type":"service_account", ...}';
+  }
+  toggleGcpServiceAccountPanels();
+
+  if (!editing || !account || !gcpAccountForm) {
+    return;
+  }
+
+  gcpAccountForm.elements.name.value = account.name;
+  if (account.service_account_source === "encrypted") {
+    if (gcpServiceAccountMode) {
+      gcpServiceAccountMode.value = "inline_encrypted";
+    }
+    if (gcpInlineServiceAccountJsonInput) {
+      gcpInlineServiceAccountJsonInput.placeholder = "Leave blank to keep current encrypted value";
+    }
+  } else {
+    if (gcpServiceAccountMode) {
+      gcpServiceAccountMode.value = "reference";
+    }
+    gcpAccountForm.elements.service_account_ref_id.value = account.service_account_ref_id != null
+      ? String(account.service_account_ref_id)
+      : "";
+  }
+  toggleGcpServiceAccountPanels();
+
+  gcpAccountForm.elements.project_ids.value = (account.project_ids || []).join(",");
+  gcpAccountForm.elements.is_active.value = boolToSelectValue(account.is_active);
+}
+
 function toggleAwsCredentialSourcePanels() {
   const source = String(awsCredentialSource?.value || "reference");
   const useReference = source === "reference";
@@ -1382,8 +1864,6 @@ function renderAzureTenantsPanel() {
         <div>Azure Profiles: ${linkedProfileLabel}</div>
         <div>Active: ${tenant.is_active}</div>
         <div class="mini-actions">
-          <button data-use-azure-tenant="${tenant.id}">Use In Profile</button>
-          <button data-wizard-azure-tenant="${tenant.id}">Profile Wizard</button>
           <button data-edit-azure-tenant="${tenant.id}">Edit</button>
           <button data-delete-azure-tenant="${tenant.id}" class="secondary">Delete</button>
         </div>
@@ -1392,50 +1872,6 @@ function renderAzureTenantsPanel() {
       },
     )
     .join("");
-
-  azureTenantsPanel.querySelectorAll("button[data-use-azure-tenant]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const tenantId = Number(button.dataset.useAzureTenant);
-      if (profileScanType) {
-        profileScanType.value = "azure";
-      }
-      refreshTargetFieldOptions();
-
-      profileConfigInput.value = JSON.stringify(
-        {
-          tenant_config_id: tenantId,
-          max_resources_per_subscription: 2000,
-        },
-        null,
-        2,
-      );
-
-      activateTab("admin");
-      logActivity(`Inserted Azure tenant config ${tenantId} into profile config.`);
-    });
-  });
-
-  azureTenantsPanel.querySelectorAll("button[data-wizard-azure-tenant]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const tenantId = Number(button.dataset.wizardAzureTenant);
-      const tenant = azureTenants.find((item) => item.id === tenantId);
-      if (!tenant) {
-        return;
-      }
-      wizardTenantId = tenant.id;
-      if (wizardTenantLabel) {
-        wizardTenantLabel.textContent = `Selected tenant: ${tenant.name}`;
-      }
-      if (wizardProfileName) {
-        wizardProfileName.value = `azure-${tenant.name}-profile`;
-      }
-      azureProfileWizardForm?.reset();
-      if (wizardProfileName) {
-        wizardProfileName.value = `azure-${tenant.name}-profile`;
-      }
-      openModal(azureProfileWizardModal);
-    });
-  });
 
   azureTenantsPanel.querySelectorAll("button[data-edit-azure-tenant]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1506,7 +1942,6 @@ function renderAwsAccountsPanel() {
         <div>Regions: ${(account.regions || []).join(", ") || "all"}</div>
         <div>Active: ${account.is_active}</div>
         <div class="mini-actions">
-          <button data-use-aws-account="${account.id}">Use In Profile</button>
           <button data-edit-aws-account="${account.id}">Edit</button>
           <button data-delete-aws-account="${account.id}" class="secondary">Delete</button>
         </div>
@@ -1515,28 +1950,6 @@ function renderAwsAccountsPanel() {
       },
     )
     .join("");
-
-  awsAccountsPanel.querySelectorAll("button[data-use-aws-account]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const accountId = Number(button.dataset.useAwsAccount);
-      if (profileScanType) {
-        profileScanType.value = "aws";
-      }
-      refreshTargetFieldOptions();
-
-      profileConfigInput.value = JSON.stringify(
-        {
-          aws_account_id: accountId,
-          max_resources_per_region: 2000,
-        },
-        null,
-        2,
-      );
-
-      activateTab("admin");
-      logActivity(`Inserted AWS account config ${accountId} into profile config.`);
-    });
-  });
 
   awsAccountsPanel.querySelectorAll("button[data-edit-aws-account]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1571,28 +1984,100 @@ function renderAwsAccountsPanel() {
   });
 }
 
+function renderGcpAccountsPanel() {
+  if (!gcpAccountsPanel) {
+    return;
+  }
+  if (!gcpAccounts.length) {
+    gcpAccountsPanel.innerHTML = '<div class="list-item">No GCP accounts configured.</div>';
+    return;
+  }
+
+  gcpAccountsPanel.innerHTML = gcpAccounts
+    .map(
+      (account) => {
+        const sourceLabel = account.service_account_source === "encrypted"
+          ? "Direct JSON (encrypted)"
+          : "Secret Reference";
+        return `
+      <div class="list-item">
+        <h4>${account.name}</h4>
+        <div>Service Account Source: ${sourceLabel}</div>
+        <div>Service Account Ref: ${account.service_account_ref_name || "unknown"}</div>
+        <div>Projects: ${(account.project_ids || []).join(", ") || "auto-discover"}</div>
+        <div>Active: ${account.is_active}</div>
+        <div class="mini-actions">
+          <button data-edit-gcp-account="${account.id}">Edit</button>
+          <button data-delete-gcp-account="${account.id}" class="secondary">Delete</button>
+        </div>
+      </div>
+    `;
+      },
+    )
+    .join("");
+
+  gcpAccountsPanel.querySelectorAll("button[data-edit-gcp-account]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const accountId = Number(button.dataset.editGcpAccount);
+      const account = gcpAccounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      setGcpAccountModalState(true, account);
+      openModal(gcpAccountModal);
+    });
+  });
+
+  gcpAccountsPanel.querySelectorAll("button[data-delete-gcp-account]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const accountId = Number(button.dataset.deleteGcpAccount);
+      const account = gcpAccounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      if (!window.confirm(`Delete GCP account '${account.name}'?`)) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/admin/gcp-accounts/${accountId}`, { method: "DELETE" });
+        await refreshCloudConfig();
+        logActivity(`GCP account deleted: ${account.name}`);
+      } catch (error) {
+        logActivity(`Failed to delete GCP account: ${String(error)}`);
+      }
+    });
+  });
+}
+
 async function refreshCloudConfig() {
   if (currentUser?.role !== "admin") {
     return;
   }
 
-  const [refs, tenants, aws, profiles] = await Promise.all([
+  const [refs, tenants, aws, gcp, profiles] = await Promise.all([
     apiFetch("/api/admin/secret-references"),
     apiFetch("/api/admin/azure-tenants"),
     apiFetch("/api/admin/aws-accounts"),
+    apiFetch("/api/admin/gcp-accounts"),
     apiFetch("/api/admin/scan-profiles"),
   ]);
 
   secretReferences = refs;
   azureTenants = tenants;
   awsAccounts = Array.isArray(aws) ? aws : [];
+  gcpAccounts = Array.isArray(gcp) ? gcp : [];
   scanProfiles = Array.isArray(profiles) ? profiles : scanProfiles;
 
   renderSecretReferencesPanel();
   syncAzureSecretRefDropdown();
   syncAwsSecretRefDropdowns();
+  syncGcpSecretRefDropdown();
+  syncSsoSecretRefDropdown();
   renderAzureTenantsPanel();
   renderAwsAccountsPanel();
+  renderGcpAccountsPanel();
+  renderProfileQuickSettings();
 }
 
 function refreshTargetFieldOptions() {
@@ -1795,7 +2280,100 @@ async function refreshUsers() {
     return;
   }
   const users = await apiFetch("/api/admin/users");
-  usersPanel.textContent = JSON.stringify(users, null, 2);
+  renderUsersList(Array.isArray(users) ? users : []);
+}
+
+function renderUsersList(users) {
+  if (!usersListPanel) {
+    return;
+  }
+
+  if (!Array.isArray(users) || !users.length) {
+    usersListPanel.innerHTML = '<div class="list-item">No users found.</div>';
+    return;
+  }
+
+  usersListPanel.innerHTML = users
+    .map((user) => {
+      const isCurrentUser = Number(currentUser?.id) === Number(user.id);
+      const nextRole = user.role === "admin" ? "user" : "admin";
+      const nextActive = !user.is_active;
+      const statusActionLabel = nextActive ? "Enable" : "Disable";
+
+      return `
+      <div class="list-item">
+        <h4>${escapeHtml(user.username)}${isCurrentUser ? " (you)" : ""}</h4>
+        <div>Email: ${escapeHtml(user.email || "-")}</div>
+        <div>Provider: ${escapeHtml(user.provider)}</div>
+        <div>Role: ${escapeHtml(user.role)}</div>
+        <div>Active: ${String(Boolean(user.is_active))}</div>
+        <div class="mini-actions">
+          <button data-user-role-id="${user.id}" data-user-next-role="${nextRole}" ${isCurrentUser ? "" : ""}>Set ${escapeHtml(nextRole)}</button>
+          <button data-user-status-id="${user.id}" data-user-next-active="${nextActive}" class="secondary">${statusActionLabel}</button>
+          <button data-user-delete-id="${user.id}" class="secondary" ${isCurrentUser ? "disabled" : ""}>Delete</button>
+        </div>
+      </div>
+    `;
+    })
+    .join("");
+
+  usersListPanel.querySelectorAll("button[data-user-role-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.userRoleId);
+      const nextRole = String(button.dataset.userNextRole || "user");
+
+      try {
+        await apiFetch(`/api/admin/users/${userId}/role?role=${encodeURIComponent(nextRole)}`, {
+          method: "PUT",
+        });
+        await refreshUsers();
+        logActivity(`User role updated: ${userId} -> ${nextRole}`);
+      } catch (error) {
+        logActivity(`Failed to update user role: ${String(error)}`);
+      }
+    });
+  });
+
+  usersListPanel.querySelectorAll("button[data-user-status-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.userStatusId);
+      const nextActive = String(button.dataset.userNextActive || "false") === "true";
+
+      try {
+        await apiFetch(`/api/admin/users/${userId}/status?is_active=${nextActive ? "true" : "false"}`, {
+          method: "PUT",
+        });
+        await refreshUsers();
+        logActivity(`User status updated: ${userId} -> ${nextActive ? "enabled" : "disabled"}`);
+      } catch (error) {
+        logActivity(`Failed to update user status: ${String(error)}`);
+      }
+    });
+  });
+
+  usersListPanel.querySelectorAll("button[data-user-delete-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.userDeleteId);
+      const targetUser = users.find((item) => Number(item.id) === userId);
+      if (!targetUser) {
+        return;
+      }
+
+      if (!window.confirm(`Delete user '${targetUser.username}'?`)) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/admin/users/${userId}`, {
+          method: "DELETE",
+        });
+        await refreshUsers();
+        logActivity(`User deleted: ${targetUser.username}`);
+      } catch (error) {
+        logActivity(`Failed to delete user: ${String(error)}`);
+      }
+    });
+  });
 }
 
 function profileCardHtml(profile) {
@@ -1808,6 +2386,7 @@ function profileCardHtml(profile) {
       <div class="mini-actions">
         <button data-edit-id="${profile.id}">Edit</button>
         <button data-run-id="${profile.id}">Run Now</button>
+        <button data-delete-id="${profile.id}" class="secondary">Delete</button>
       </div>
     </div>
   `;
@@ -1835,9 +2414,9 @@ async function refreshProfiles() {
       if (profileScanType) {
         profileScanType.value = profile.scan_type;
       }
-      profileConfigInput.value = JSON.stringify(profile.config || {}, null, 2);
+      setProfileConfigForScanType(profile.scan_type, profile.config || {});
       setProfileEditState(true, profile);
-      refreshTargetFieldOptions();
+      activateAdminPane("scan-profile");
       logActivity(`Editing profile ${profile.name}`);
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
@@ -1855,6 +2434,38 @@ async function refreshProfiles() {
         await refreshInventory();
       } catch (error) {
         logActivity(String(error));
+      }
+    });
+  });
+
+  profilesPanel.querySelectorAll("button[data-delete-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = Number(button.dataset.deleteId);
+      const profile = profiles.find((candidate) => candidate.id === id);
+      if (!profile) {
+        return;
+      }
+
+      if (!window.confirm(`Delete profile '${profile.name}'? This removes its run history and related inventory rows.`)) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/admin/scan-profiles/${id}`, {
+          method: "DELETE",
+        });
+
+        if (profileEditId === id) {
+          resetProfileForm();
+        }
+
+        await refreshProfiles();
+        await refreshRuns();
+        await refreshInventoryFilterOptions();
+        await refreshInventory();
+        logActivity(`Profile deleted: ${profile.name}`);
+      } catch (error) {
+        logActivity(`Failed to delete profile: ${String(error)}`);
       }
     });
   });
@@ -2180,7 +2791,7 @@ if (cancelEditProfileBtn) {
 
 if (profileScanType) {
   profileScanType.addEventListener("change", () => {
-    refreshTargetFieldOptions();
+    setProfileConfigForScanType(String(profileScanType.value || "icmp"));
   });
 }
 
@@ -2214,11 +2825,18 @@ if (insertSecretBtn) {
       setValueAtPath(parsed, targetPath, reference);
 
       profileConfigInput.value = JSON.stringify(parsed, null, 2);
+      renderProfileQuickSettings();
       renderSecretPreview(targetPath, reference);
       logActivity(`Secret reference inserted into config at '${targetPath}'`);
     } catch (error) {
       logActivity(String(error));
     }
+  });
+}
+
+if (profileConfigInput) {
+  profileConfigInput.addEventListener("blur", () => {
+    renderProfileQuickSettings();
   });
 }
 
@@ -2547,41 +3165,84 @@ if (awsCredentialSource) {
   });
 }
 
-if (closeAzureProfileWizardModalBtn) {
-  closeAzureProfileWizardModalBtn.addEventListener("click", () => {
-    wizardTenantId = null;
-    closeModal(azureProfileWizardModal);
+if (openGcpAccountModalBtn) {
+  openGcpAccountModalBtn.addEventListener("click", async () => {
+    try {
+      await refreshCloudConfig();
+      setGcpAccountModalState(false);
+      openModal(gcpAccountModal);
+      if (!secretReferences.length) {
+        logActivity("No secret references found. You can still configure GCP using direct encrypted service account JSON.");
+      }
+    } catch (error) {
+      logActivity(`Unable to open GCP configuration: ${String(error)}`);
+    }
   });
 }
 
-if (azureProfileWizardForm) {
-  azureProfileWizardForm.addEventListener("submit", async (event) => {
+if (closeGcpAccountModalBtn) {
+  closeGcpAccountModalBtn.addEventListener("click", () => {
+    setGcpAccountModalState(false);
+    closeModal(gcpAccountModal);
+  });
+}
+
+if (gcpServiceAccountMode) {
+  gcpServiceAccountMode.addEventListener("change", () => {
+    toggleGcpServiceAccountPanels();
+  });
+}
+
+if (gcpAccountForm) {
+  gcpAccountForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!wizardTenantId) {
-      logActivity("No Azure tenant selected for wizard.");
+    const fd = new FormData(gcpAccountForm);
+    const serviceAccountMode = String(fd.get("service_account_mode") || "reference");
+    const isEditing = Number.isInteger(gcpAccountEditId);
+
+    const payload = {
+      name: String(fd.get("name") || "").trim(),
+      project_ids: splitOptionalList(String(fd.get("project_ids") || "")),
+      is_active: String(fd.get("is_active") || "true") === "true",
+    };
+
+    if (!payload.name) {
+      logActivity("Provide a GCP account name.");
       return;
     }
 
-    const fd = new FormData(azureProfileWizardForm);
-    const payload = {
-      profile_name: String(fd.get("profile_name") || "").trim() || null,
-      schedule_minutes: Number(fd.get("schedule_minutes") || 60),
-      max_resources_per_subscription: Number(fd.get("max_resources_per_subscription") || 2000),
-      is_enabled: String(fd.get("is_enabled") || "true") === "true",
-    };
+    if (serviceAccountMode === "reference") {
+      const refId = Number(fd.get("service_account_ref_id"));
+      if (!Number.isInteger(refId) || refId <= 0) {
+        logActivity("Select a valid service account reference.");
+        return;
+      }
+      payload.service_account_ref_id = refId;
+    } else {
+      const inlineJson = String(fd.get("service_account_json") || "").trim();
+      if (inlineJson) {
+        payload.service_account_json = inlineJson;
+      } else if (!isEditing || gcpAccountCurrentSecretSource !== "encrypted") {
+        logActivity("Provide service account JSON when using direct encrypted mode.");
+        return;
+      }
+    }
 
     try {
-      const profile = await apiFetch(`/api/admin/azure-tenants/${wizardTenantId}/create-profile`, {
-        method: "POST",
+      const path = isEditing ? `/api/admin/gcp-accounts/${gcpAccountEditId}` : "/api/admin/gcp-accounts";
+      const method = isEditing ? "PUT" : "POST";
+
+      await apiFetch(path, {
+        method,
         body: JSON.stringify(payload),
       });
-      closeModal(azureProfileWizardModal);
-      wizardTenantId = null;
-      await refreshProfiles();
-      activateTab("admin");
-      logActivity(`Azure profile created from tenant: ${profile.name}`);
+
+      await refreshCloudConfig();
+      setGcpAccountModalState(false);
+      closeModal(gcpAccountModal);
+      logActivity(`${isEditing ? "GCP account updated" : "GCP account created"}: ${payload.name}`);
     } catch (error) {
-      logActivity(`Failed to create profile from tenant: ${String(error)}`);
+      logActivity(`Failed to save GCP account: ${String(error)}`);
     }
   });
 }
@@ -2597,39 +3258,110 @@ if (refreshCloudConfigBtn) {
   });
 }
 
-userForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const fd = new FormData(userForm);
+if (ssoClientSecretMode) {
+  ssoClientSecretMode.addEventListener("change", () => {
+    toggleSsoSecretModePanels();
+  });
+}
 
-  const payload = {
-    username: String(fd.get("username") || "").trim(),
-    email: String(fd.get("email") || "").trim() || null,
-    password: String(fd.get("password") || "").trim() || null,
-    role: fd.get("role"),
-    provider: fd.get("provider"),
-    entra_oid: String(fd.get("entra_oid") || "").trim() || null,
-  };
+if (ssoConfigForm) {
+  ssoConfigForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(ssoConfigForm);
+    const secretMode = String(fd.get("client_secret_mode") || "reference");
 
-  try {
-    await apiFetch("/api/admin/users", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    logActivity(`User created: ${payload.username}`);
-    await refreshUsers();
-  } catch (error) {
-    logActivity(String(error));
-  }
-});
+    const payload = {
+      is_enabled: String(fd.get("is_enabled") || "false") === "true",
+      tenant_id: String(fd.get("tenant_id") || "").trim() || null,
+      client_id: String(fd.get("client_id") || "").trim() || null,
+      redirect_uri: String(fd.get("redirect_uri") || "").trim() || null,
+      default_role: String(fd.get("default_role") || "user"),
+      role_claim_key: String(fd.get("role_claim_key") || "groups").trim() || "groups",
+      admin_group_ids: splitOptionalList(String(fd.get("admin_group_ids") || "")),
+      user_group_ids: splitOptionalList(String(fd.get("user_group_ids") || "")),
+      admin_emails: splitOptionalLowerList(String(fd.get("admin_emails") || "")),
+    };
 
-refreshUsersBtn.addEventListener("click", async () => {
-  try {
-    await refreshUsers();
-    logActivity("User list refreshed");
-  } catch (error) {
-    logActivity(String(error));
-  }
-});
+    if (secretMode === "reference") {
+      const secretRefRaw = String(fd.get("client_secret_ref_id") || "").trim();
+      const secretRefId = secretRefRaw ? Number(secretRefRaw) : null;
+      if (secretRefId && Number.isInteger(secretRefId) && secretRefId > 0) {
+        payload.client_secret_ref_id = secretRefId;
+      } else {
+        payload.client_secret_ref_id = null;
+      }
+    } else {
+      const inlineSecret = String(fd.get("client_secret") || "").trim();
+      if (inlineSecret) {
+        payload.client_secret = inlineSecret;
+      } else if (payload.is_enabled && ssoCurrentSecretSource !== "encrypted") {
+        logActivity("Provide a client secret when using direct encrypted mode.");
+        return;
+      }
+    }
+
+    try {
+      const updated = await apiFetch("/api/admin/sso-config", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      setSsoConfigForm(updated);
+      logActivity("SSO configuration updated");
+    } catch (error) {
+      logActivity(`Failed to save SSO configuration: ${String(error)}`);
+    }
+  });
+}
+
+if (refreshSsoConfigBtn) {
+  refreshSsoConfigBtn.addEventListener("click", async () => {
+    try {
+      await refreshSsoConfig();
+      logActivity("SSO configuration refreshed");
+    } catch (error) {
+      logActivity(`Failed to refresh SSO configuration: ${String(error)}`);
+    }
+  });
+}
+
+if (userForm) {
+  userForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(userForm);
+
+    const payload = {
+      username: String(fd.get("username") || "").trim(),
+      email: String(fd.get("email") || "").trim() || null,
+      password: String(fd.get("password") || "").trim() || null,
+      role: fd.get("role"),
+      provider: fd.get("provider"),
+      entra_oid: String(fd.get("entra_oid") || "").trim() || null,
+    };
+
+    try {
+      await apiFetch("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      logActivity(`User created: ${payload.username}`);
+      await refreshUsers();
+      userForm.reset();
+    } catch (error) {
+      logActivity(String(error));
+    }
+  });
+}
+
+if (refreshUsersBtn) {
+  refreshUsersBtn.addEventListener("click", async () => {
+    try {
+      await refreshUsers();
+      logActivity("User list refreshed");
+    } catch (error) {
+      logActivity(String(error));
+    }
+  });
+}
 
 refreshProfilesBtn.addEventListener("click", async () => {
   try {
@@ -2640,7 +3372,7 @@ refreshProfilesBtn.addEventListener("click", async () => {
   }
 });
 
-[azureTenantModal, awsAccountModal, azureProfileWizardModal, secretRefModal].forEach((modal) => {
+[azureTenantModal, awsAccountModal, gcpAccountModal, secretRefModal].forEach((modal) => {
   if (!modal) {
     return;
   }
@@ -2655,8 +3387,8 @@ refreshProfilesBtn.addEventListener("click", async () => {
       if (modal === secretRefModal) {
         setSecretRefModalState(false);
       }
-      if (modal === azureProfileWizardModal) {
-        wizardTenantId = null;
+      if (modal === gcpAccountModal) {
+        setGcpAccountModalState(false);
       }
       closeModal(modal);
     }
@@ -2683,17 +3415,19 @@ document.addEventListener("keydown", (event) => {
     closeModal(awsAccountModal);
     return;
   }
-  if (azureProfileWizardModal && !azureProfileWizardModal.classList.contains("hidden")) {
-    wizardTenantId = null;
-    closeModal(azureProfileWizardModal);
+  if (gcpAccountModal && !gcpAccountModal.classList.contains("hidden")) {
+    setGcpAccountModalState(false);
+    closeModal(gcpAccountModal);
   }
 });
 
-refreshTargetFieldOptions();
+setProfileConfigForScanType(String(profileScanType?.value || "icmp"));
 toggleProviderPanels();
 toggleSecretRefProviderPanels();
 toggleAzureSecretModePanels();
 toggleAwsAuthModePanels();
+toggleGcpServiceAccountPanels();
+toggleSsoSecretModePanels();
 setProfileEditState(false);
 updateInventoryItemTypeButtonText();
 renderInventoryItemTypeToggles();

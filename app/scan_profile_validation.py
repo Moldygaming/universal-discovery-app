@@ -12,6 +12,7 @@ _REQUIRED_FIELDS_BY_SCAN_TYPE: dict[str, tuple[str, ...]] = {
     "snmp": ("target",),
     "azure": (),
     "aws": ("access_key_id",),
+    "gcp": (),
 }
 
 # Fields in these keys should not be embedded inline for profile storage.
@@ -19,6 +20,7 @@ _SENSITIVE_FIELDS_BY_SCAN_TYPE: dict[str, tuple[str, ...]] = {
     "snmp": ("community",),
     "azure": ("client_secret",),
     "aws": ("secret_access_key", "session_token"),
+    "gcp": ("service_account_json",),
 }
 
 
@@ -38,6 +40,19 @@ def validate_scan_profile_config(scan_type: str, config: dict[str, Any]) -> None
         aws_account_id = config.get("aws_account_id")
         if aws_account_id is None and _is_blank(config.get("access_key_id")):
             raise ScanProfileValidationError("Missing required config field for aws: access_key_id or aws_account_id")
+
+    if scan_type == "gcp":
+        gcp_account_id = config.get("gcp_account_id")
+        if gcp_account_id is None:
+            if _is_blank(config.get("service_account_json")):
+                raise ScanProfileValidationError(
+                    "Missing required config field for gcp: service_account_json or gcp_account_id"
+                )
+            project_ids = config.get("project_ids")
+            if not isinstance(project_ids, list) or not [item for item in project_ids if str(item).strip()]:
+                raise ScanProfileValidationError(
+                    "Missing required config field for gcp: project_ids when gcp_account_id is not provided"
+                )
 
     required = _REQUIRED_FIELDS_BY_SCAN_TYPE.get(scan_type, ())
     for key in required:

@@ -5,10 +5,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db_models import AwsAccountConfig, AzureTenantConfig, InventoryItem, ScanProfile, ScanRun
+from app.db_models import AwsAccountConfig, AzureTenantConfig, GcpAccountConfig, InventoryItem, ScanProfile, ScanRun
 from app.secrets.provider import is_secret_ref, resolve_secrets
 from app.services.aws_inventory import discover_aws_resources
 from app.services.azure_inventory import discover_azure_resources
+from app.services.gcp_inventory import discover_gcp_resources
 from app.services.icmp_scan import scan_icmp
 from app.services.snmp_scan import scan_snmp
 
@@ -166,6 +167,40 @@ async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str,
         }
         return summary, result
 
+    if scan_type == "gcp":
+        service_account_json = cfg.get("service_account_json")
+        project_ids = cfg.get("project_ids")
+
+        gcp_account_id = cfg.get("gcp_account_id")
+        if gcp_account_id is not None:
+            gcp_account = db.query(GcpAccountConfig).filter(GcpAccountConfig.id == int(gcp_account_id)).first()
+            if not gcp_account or not gcp_account.is_active:
+                raise ValueError(f"GCP account config not found or inactive: {gcp_account_id}")
+
+            service_account_json = str(resolve_secrets(_json_load(gcp_account.service_account_ref.reference_json)))
+            project_ids = _json_load(gcp_account.project_ids_json) if gcp_account.project_ids_json else None
+
+        if not service_account_json:
+            raise ValueError("GCP scan requires service_account_json or gcp_account_id")
+
+        if isinstance(service_account_json, dict):
+            service_account_json = json.dumps(service_account_json)
+        elif not isinstance(service_account_json, str):
+            service_account_json = str(service_account_json)
+
+        result = await asyncio.to_thread(
+            discover_gcp_resources,
+            service_account_json,
+            project_ids,
+            int(cfg.get("max_resources_per_project", 2000)),
+        )
+        summary = {
+            "scan_type": "gcp",
+            "projects_scanned": result.get("projects_scanned", 0),
+            "warnings": len(result.get("warnings", [])),
+        }
+        return summary, result
+
     raise ValueError(f"Unsupported scan_type: {scan_type}")
 
 
@@ -263,6 +298,71 @@ def _inventory_items_from_scan(scan_type: str, result: dict[str, Any]) -> list[d
                         "region": region,
                         "parent_key": None,
                         "attributes": rds,
+                    }
+                )
+
+    elif scan_type == "gcp":
+        for project in result.get("projects", []):
+            project_id = project.get("project_id") or "unknown-project"
+            parent_key = f"gcp-project:{project_id}"
+
+            for instance in project.get("compute_instances", []):
+                instance_name = instance.get("name") or instance.get("instance_id") or "unknown"
+                zone = instance.get("zone")
+                region = None
+                if isinstance(zone, str) and "/" in zone:
+                    zone_name = zone.split("/")[-1]
+                    if "-" in zone_name:
+                        region = "-".join(zone_name.split("-")[:-1])
+                elif isinstance(zone, str):
+                    region = zone
+
+                items.append(
+                    {
+                        "provider": "gcp",
+                        "item_key": instance.get("self_link") or f"gcp-compute:{project_id}:{instance_name}",
+                        "item_type": "gcp.compute.instance",
+                        "name": instance_name,
+                        "region": region,
+                        "parent_key": parent_key,
+                        "attributes": {
+                            **instance,
+                            "project_id": project_id,
+                        },
+                    }
+                )
+
+            for sql_instance in project.get("cloud_sql_instances", []):
+                sql_name = sql_instance.get("name") or "unknown"
+                items.append(
+                    {
+                        "provider": "gcp",
+                        "item_key": sql_instance.get("self_link") or f"gcp-sql:{project_id}:{sql_name}",
+                        "item_type": "gcp.sql.instance",
+                        "name": sql_name,
+                        "region": sql_instance.get("region"),
+                        "parent_key": parent_key,
+                        "attributes": {
+                            **sql_instance,
+                            "project_id": project_id,
+                        },
+                    }
+                )
+
+            for bucket in project.get("storage_buckets", []):
+                bucket_name = bucket.get("name") or "unknown"
+                items.append(
+                    {
+                        "provider": "gcp",
+                        "item_key": bucket.get("id") or f"gcp-storage:{project_id}:{bucket_name}",
+                        "item_type": "gcp.storage.bucket",
+                        "name": bucket_name,
+                        "region": bucket.get("location"),
+                        "parent_key": parent_key,
+                        "attributes": {
+                            **bucket,
+                            "project_id": project_id,
+                        },
                     }
                 )
 

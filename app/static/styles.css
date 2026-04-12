@@ -341,6 +341,20 @@ button:hover {
   margin-top: 0.8rem;
 }
 
+.cloud-sections {
+  display: grid;
+  gap: 0;
+  margin-top: 0.8rem;
+}
+
+.cloud-section {
+  padding: 0.6rem 0;
+}
+
+.cloud-section + .cloud-section {
+  border-top: 1px dashed rgba(31, 43, 34, 0.26);
+}
+
 .small-head {
   margin-top: 0;
   margin-bottom: 0.55rem;
@@ -404,6 +418,23 @@ button:hover {
   padding: 0.7rem;
   margin-bottom: 0.75rem;
   background: rgba(255, 255, 255, 0.6);
+}
+
+.profile-advanced-config {
+  margin-bottom: 0.75rem;
+}
+
+.profile-advanced-config > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-bottom: 0.45rem;
+}
+
+.profile-quick-title {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .actions-inline {

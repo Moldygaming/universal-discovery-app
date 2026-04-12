@@ -175,6 +175,7 @@
               <button class="admin-blade-item" data-admin-pane="secret-builder" type="button">Secret Reference Builder</button>
               <button class="admin-blade-item" data-admin-pane="scan-profiles" type="button">Scan Profiles</button>
               <button class="admin-blade-item" data-admin-pane="user-management" type="button">User Management</button>
+              <button class="admin-blade-item" data-admin-pane="sso-integration" type="button">SSO Integration</button>
               <button class="admin-blade-item" data-admin-pane="activity" type="button">Activity</button>
             </aside>
 
@@ -184,22 +185,27 @@
             <div class="actions-inline">
               <button id="openAzureTenantModalBtn" type="button">Configure Azure Tenant</button>
               <button id="openAwsAccountModalBtn" type="button">Configure AWS Account</button>
+              <button id="openGcpAccountModalBtn" type="button">Configure GCP Account</button>
               <button id="openSecretRefModalBtn" type="button" class="secondary">Add Secret Reference</button>
               <button id="refreshCloudConfigBtn" type="button" class="secondary">Refresh Cloud Config</button>
             </div>
-            <div class="split-panels">
-              <div>
+            <div class="cloud-sections">
+              <section class="cloud-section">
                 <h3 class="small-head">Azure Tenants</h3>
                 <div id="azureTenantsPanel" class="list-panel"></div>
-              </div>
-              <div>
+              </section>
+              <section class="cloud-section">
                 <h3 class="small-head">AWS Accounts</h3>
                 <div id="awsAccountsPanel" class="list-panel"></div>
-              </div>
-              <div>
+              </section>
+              <section class="cloud-section">
+                <h3 class="small-head">GCP Accounts</h3>
+                <div id="gcpAccountsPanel" class="list-panel"></div>
+              </section>
+              <section class="cloud-section">
                 <h3 class="small-head">Secret References</h3>
                 <div id="secretRefsPanel" class="list-panel"></div>
-              </div>
+              </section>
             </div>
               </article>
 
@@ -217,6 +223,7 @@
                     <option value="snmp">snmp</option>
                     <option value="azure">azure</option>
                     <option value="aws">aws</option>
+                    <option value="gcp">gcp</option>
                   </select>
                 </label>
                 <label>Schedule Minutes
@@ -229,9 +236,13 @@
                   </select>
                 </label>
               </div>
-              <label>Config JSON
-                <textarea id="profileConfigInput" name="config" rows="12" required>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</textarea>
-              </label>
+              <div id="profileQuickSettings" class="provider-panel"></div>
+              <details class="profile-advanced-config">
+                <summary>Advanced Config JSON</summary>
+                <label>Config JSON
+                  <textarea id="profileConfigInput" name="config" rows="12" required>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</textarea>
+                </label>
+              </details>
               <p class="hint">
                 For secret fields use <code>$secret</code> references, e.g. Azure: <code>{"$secret":{"provider":"azure_key_vault","vault_url":"https://my-vault.vault.azure.net/","name":"discovery-client-secret"}}</code>
               </p>
@@ -344,8 +355,75 @@
               </label>
               <button type="submit">Create User</button>
             </form>
-            <button id="refreshUsersBtn">Refresh Users</button>
-            <pre id="usersPanel">No users loaded.</pre>
+            <div class="actions-inline">
+              <button id="refreshUsersBtn" type="button">Refresh Users</button>
+            </div>
+            <div id="usersListPanel" class="list-panel"></div>
+              </article>
+
+              <article class="card admin-pane hidden" data-admin-pane="sso-integration">
+            <h2>SSO Integration (Microsoft Entra ID)</h2>
+            <form id="ssoConfigForm">
+              <div class="inline two">
+                <label>Enabled
+                  <select name="is_enabled">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>Default Role
+                  <select name="default_role">
+                    <option value="user" selected>user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+              </div>
+              <div class="inline two">
+                <label>Tenant ID
+                  <input name="tenant_id" placeholder="11111111-2222-3333-4444-555555555555" />
+                </label>
+                <label>Client ID
+                  <input name="client_id" placeholder="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" />
+                </label>
+              </div>
+              <label>Redirect URI (optional)
+                <input name="redirect_uri" placeholder="https://your-app.example.com/api/auth/entra/callback" />
+              </label>
+              <label>Role Claim Key
+                <input name="role_claim_key" placeholder="groups" value="groups" />
+              </label>
+              <label>Client Secret Source
+                <select id="ssoClientSecretMode" name="client_secret_mode">
+                  <option value="reference" selected>Secret Reference (recommended)</option>
+                  <option value="inline_encrypted">Direct Secret (stored encrypted)</option>
+                </select>
+              </label>
+              <div id="ssoSecretRefPanel" class="provider-panel">
+                <label>Client Secret Reference
+                  <select id="ssoClientSecretRefSelect" name="client_secret_ref_id"></select>
+                </label>
+              </div>
+              <div id="ssoInlineSecretPanel" class="provider-panel hidden">
+                <label>Client Secret (stored encrypted at rest)
+                  <input id="ssoInlineClientSecretInput" name="client_secret" type="password" autocomplete="new-password" placeholder="Enter Entra app client secret" />
+                </label>
+                <p class="hint">For edit mode, leave blank to keep the current encrypted secret.</p>
+              </div>
+              <label>Admin Group IDs (comma separated)
+                <input name="admin_group_ids" placeholder="group-id-1,group-id-2" />
+              </label>
+              <label>User Group IDs (comma separated)
+                <input name="user_group_ids" placeholder="group-id-3,group-id-4" />
+              </label>
+              <label>Admin Emails (fallback, comma separated)
+                <input name="admin_emails" placeholder="admin@contoso.com,ops@contoso.com" />
+              </label>
+              <div class="actions-inline">
+                <button id="saveSsoConfigBtn" type="submit">Save SSO Configuration</button>
+                <button id="refreshSsoConfigBtn" type="button" class="secondary">Refresh SSO Configuration</button>
+              </div>
+            </form>
+            <pre id="ssoConfigSummary" class="compact-pre">No SSO configuration loaded.</pre>
               </article>
 
               <article id="adminActivityCard" class="card admin-pane hidden" data-admin-pane="activity">
@@ -508,32 +586,43 @@
         </div>
       </div>
 
-      <div id="azureProfileWizardModal" class="modal hidden">
+      <div id="gcpAccountModal" class="modal hidden">
         <div class="modal-card">
           <div class="modal-head">
-            <h3>Create Azure Profile</h3>
-            <button id="closeAzureProfileWizardModalBtn" type="button" class="secondary">Close</button>
+            <h3 id="gcpAccountModalTitle">Configure GCP Account</h3>
+            <button id="closeGcpAccountModalBtn" type="button" class="secondary">Close</button>
           </div>
-          <form id="azureProfileWizardForm">
-            <p class="hint" id="wizardTenantLabel">Selected tenant:</p>
-            <label>Profile Name
-              <input id="wizardProfileName" name="profile_name" placeholder="azure-tenant-profile" />
+          <form id="gcpAccountForm">
+            <label>Account Name
+              <input name="name" required placeholder="prod-gcp-account" />
             </label>
-            <div class="inline three">
-              <label>Schedule Minutes
-                <input name="schedule_minutes" type="number" min="1" max="10080" value="60" />
-              </label>
-              <label>Max Resources / Subscription
-                <input name="max_resources_per_subscription" type="number" min="1" max="50000" value="2000" />
-              </label>
-              <label>Enabled
-                <select name="is_enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
+            <label>Service Account Source
+              <select id="gcpServiceAccountMode" name="service_account_mode">
+                <option value="reference" selected>Secret Reference (recommended)</option>
+                <option value="inline_encrypted">Direct JSON (stored encrypted)</option>
+              </select>
+            </label>
+            <div id="gcpServiceAccountRefPanel" class="provider-panel">
+              <label>Service Account JSON Reference
+                <select id="gcpServiceAccountRefSelect" name="service_account_ref_id"></select>
               </label>
             </div>
-            <button type="submit">Create Profile From Tenant</button>
+            <div id="gcpServiceAccountInlinePanel" class="provider-panel hidden">
+              <label>Service Account JSON (stored encrypted at rest)
+                <textarea id="gcpInlineServiceAccountJsonInput" name="service_account_json" rows="8" placeholder='{"type":"service_account", ...}'></textarea>
+              </label>
+              <p class="hint">For edit mode, leave blank to keep the current encrypted value.</p>
+            </div>
+            <label>Project IDs (comma separated, optional)
+              <input name="project_ids" placeholder="my-project-1,my-project-2" />
+            </label>
+            <label>Active
+              <select name="is_active">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <button id="saveGcpAccountBtn" type="submit">Save GCP Account</button>
           </form>
         </div>
       </div>

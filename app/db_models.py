@@ -102,6 +102,40 @@ class AwsAccountConfig(Base):
     )
 
 
+class GcpAccountConfig(Base):
+    __tablename__ = "gcp_account_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    service_account_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
+    project_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service_account_ref: Mapped[SecretReference] = relationship("SecretReference", foreign_keys=[service_account_ref_id])
+
+
+class SsoConfig(Base):
+    __tablename__ = "sso_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False, default="entra", unique=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tenant_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    client_secret_ref_id: Mapped[int | None] = mapped_column(ForeignKey("secret_references.id"), nullable=True)
+    redirect_uri: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    default_role: Mapped[str] = mapped_column(String(24), nullable=False, default="user")
+    role_claim_key: Mapped[str] = mapped_column(String(100), nullable=False, default="groups")
+    admin_group_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_group_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_emails_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    client_secret_ref: Mapped[SecretReference | None] = relationship("SecretReference", foreign_keys=[client_secret_ref_id])
+
+
 class InventoryItem(Base):
     __tablename__ = "inventory_items"
 

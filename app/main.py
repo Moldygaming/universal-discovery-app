@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 import time
+from typing import Any
 from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuth
@@ -18,6 +19,9 @@ from app.api_models import (
     AwsAccountCreateRequest,
     AwsAccountOut,
     AwsAccountUpdateRequest,
+    GcpAccountCreateRequest,
+    GcpAccountOut,
+    GcpAccountUpdateRequest,
     AzureTenantCreateProfileRequest,
     AzureTenantCreateRequest,
     AzureTenantOut,
@@ -30,6 +34,8 @@ from app.api_models import (
     ScanProfileOut,
     ScanProfileUpdateRequest,
     ScanRunOut,
+    SsoConfigOut,
+    SsoConfigUpdateRequest,
     SecretReferenceCreateRequest,
     SecretReferenceOut,
     SecretReferenceUpdateRequest,
@@ -38,33 +44,23 @@ from app.api_models import (
 )
 from app.config import settings
 from app.database import Base, SessionLocal, apply_runtime_schema_patches, engine, get_db_session
-from app.db_models import AwsAccountConfig, AzureTenantConfig, InventoryItem, ScanProfile, ScanRun, SecretReference, User
+from app.db_models import AwsAccountConfig, AzureTenantConfig, GcpAccountConfig, InventoryItem, ScanProfile, ScanRun, SecretReference, SsoConfig, User
 from app.discovery_runtime import execute_and_persist_scan, mask_sensitive_config
 from app.scan_profile_validation import ScanProfileValidationError, validate_scan_profile_config
 from app.scheduler_runtime import discovery_scheduler
 from app.secrets.provider import SecretResolutionError, validate_secret_reference
-from app.secrets.provider import build_local_encrypted_secret_reference
+from app.secrets.provider import build_local_encrypted_secret_reference, resolve_secrets
 from app.security import AuthError, create_access_token, hash_password, verify_password, decode_access_token
 
 Base.metadata.create_all(bind=engine)
 apply_runtime_schema_patches()
 
-oauth = OAuth()
-if settings.entra_enabled and settings.entra_tenant_id and settings.entra_client_id and settings.entra_client_secret:
-    oauth.register(
-        name="entra",
-        client_id=settings.entra_client_id,
-        client_secret=settings.entra_client_secret,
-        server_metadata_url=(
-            f"https://login.microsoftonline.com/{settings.entra_tenant_id}/v2.0/.well-known/openid-configuration"
-        ),
-        client_kwargs={"scope": "openid profile email"},
-    )
-
 security = HTTPBearer(auto_error=False)
 INTERNAL_AZURE_SECRET_REF_PREFIX = "__internal_azure_"
 INTERNAL_AWS_SECRET_REF_PREFIX = "__internal_aws_"
 INTERNAL_AWS_INLINE_SECRET_REF_PREFIX = "__internal_aws_inline_"
+INTERNAL_GCP_SECRET_REF_PREFIX = "__internal_gcp_"
+INTERNAL_SSO_SECRET_REF_PREFIX = "__internal_sso_"
 
 
 def _to_json(raw: str | None):
@@ -172,8 +168,21 @@ def _is_internal_aws_inline_secret_ref(secret_ref: SecretReference | None) -> bo
     return bool(secret_ref and secret_ref.name.startswith(INTERNAL_AWS_INLINE_SECRET_REF_PREFIX))
 
 
+def _is_internal_gcp_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return bool(secret_ref and secret_ref.name.startswith(INTERNAL_GCP_SECRET_REF_PREFIX))
+
+
+def _is_internal_sso_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return bool(secret_ref and secret_ref.name.startswith(INTERNAL_SSO_SECRET_REF_PREFIX))
+
+
 def _is_internal_secret_ref(secret_ref: SecretReference | None) -> bool:
-    return _is_internal_azure_secret_ref(secret_ref) or _is_internal_aws_secret_ref(secret_ref)
+    return (
+        _is_internal_azure_secret_ref(secret_ref)
+        or _is_internal_aws_secret_ref(secret_ref)
+        or _is_internal_gcp_secret_ref(secret_ref)
+        or _is_internal_sso_secret_ref(secret_ref)
+    )
 
 
 def _create_internal_azure_secret_ref(db: Session, tenant_name: str, client_secret: str) -> SecretReference:
@@ -271,6 +280,69 @@ def _cleanup_orphaned_internal_aws_inline_secret_ref(db: Session, secret_ref_id:
     db.delete(secret_ref)
 
 
+def _create_internal_gcp_secret_ref(db: Session, account_name: str, service_account_json: str) -> SecretReference:
+    safe_account_name = account_name.strip().replace(" ", "-").lower() or "gcp-account"
+    name = f"{INTERNAL_GCP_SECRET_REF_PREFIX}{safe_account_name}-{int(time.time() * 1000)}"
+    reference = build_local_encrypted_secret_reference(service_account_json)
+    parsed = validate_secret_reference(reference)
+
+    secret_ref = SecretReference(
+        name=name,
+        provider=parsed.provider,
+        reference_json=json.dumps(reference),
+    )
+    db.add(secret_ref)
+    db.flush()
+    return secret_ref
+
+
+def _cleanup_orphaned_internal_gcp_secret_ref(db: Session, secret_ref_id: int | None) -> None:
+    if not secret_ref_id:
+        return
+
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == secret_ref_id).first()
+    if not _is_internal_gcp_secret_ref(secret_ref):
+        return
+
+    in_use = db.query(GcpAccountConfig).filter(GcpAccountConfig.service_account_ref_id == secret_ref_id).first()
+    if in_use is not None:
+        return
+
+    db.delete(secret_ref)
+
+
+def _create_internal_sso_secret_ref(db: Session, tenant_id: str, client_id: str, client_secret: str) -> SecretReference:
+    tenant_fragment = (tenant_id or "tenant").strip().replace(" ", "-").lower()
+    client_fragment = (client_id or "client").strip().replace(" ", "-").lower()
+    name = f"{INTERNAL_SSO_SECRET_REF_PREFIX}{tenant_fragment}-{client_fragment}-{int(time.time() * 1000)}"
+    reference = build_local_encrypted_secret_reference(client_secret)
+    parsed = validate_secret_reference(reference)
+
+    secret_ref = SecretReference(
+        name=name,
+        provider=parsed.provider,
+        reference_json=json.dumps(reference),
+    )
+    db.add(secret_ref)
+    db.flush()
+    return secret_ref
+
+
+def _cleanup_orphaned_internal_sso_secret_ref(db: Session, secret_ref_id: int | None) -> None:
+    if not secret_ref_id:
+        return
+
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == secret_ref_id).first()
+    if not _is_internal_sso_secret_ref(secret_ref):
+        return
+
+    in_use = db.query(SsoConfig).filter(SsoConfig.client_secret_ref_id == secret_ref_id).first()
+    if in_use is not None:
+        return
+
+    db.delete(secret_ref)
+
+
 def _aws_credential_source(account: AwsAccountConfig) -> str | None:
     if (account.auth_mode or "access_key") != "access_key":
         return None
@@ -313,6 +385,202 @@ def _aws_account_out(account: AwsAccountConfig) -> AwsAccountOut:
         regions=regions,
         is_active=account.is_active,
     )
+
+
+def _gcp_account_out(account: GcpAccountConfig) -> GcpAccountOut:
+    project_ids = _to_json(account.project_ids_json) if account.project_ids_json else None
+    if project_ids is not None and not isinstance(project_ids, list):
+        project_ids = None
+
+    service_account_ref_name = account.service_account_ref.name if account.service_account_ref else None
+    service_account_source = "reference"
+    if _is_internal_gcp_secret_ref(account.service_account_ref):
+        service_account_ref_name = "Stored Encrypted (local)"
+        service_account_source = "encrypted"
+
+    return GcpAccountOut(
+        id=account.id,
+        name=account.name,
+        service_account_ref_id=account.service_account_ref_id,
+        service_account_ref_name=service_account_ref_name,
+        service_account_source=service_account_source,
+        project_ids=project_ids,
+        is_active=account.is_active,
+    )
+
+
+def _to_string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    values: list[str] = []
+    for item in raw:
+        value = str(item or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def _to_lower_email_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    values: list[str] = []
+    for item in raw:
+        value = str(item or "").strip().lower()
+        if value:
+            values.append(value)
+    return values
+
+
+def _sso_config_out(config: SsoConfig | None) -> SsoConfigOut:
+    if config is None:
+        if settings.entra_enabled and settings.entra_tenant_id and settings.entra_client_id and settings.entra_client_secret:
+            return SsoConfigOut(
+                provider="entra",
+                source="environment",
+                is_enabled=True,
+                tenant_id=settings.entra_tenant_id,
+                client_id=settings.entra_client_id,
+                client_secret_ref_id=None,
+                client_secret_ref_name="From Environment",
+                client_secret_source="none",
+                redirect_uri=settings.entra_redirect_uri or None,
+                default_role="user",
+                role_claim_key="groups",
+                admin_group_ids=[],
+                user_group_ids=[],
+                admin_emails=list(settings.entra_admin_emails),
+            )
+
+        return SsoConfigOut(
+            provider="entra",
+            source="disabled",
+            is_enabled=False,
+            tenant_id=None,
+            client_id=None,
+            client_secret_ref_id=None,
+            client_secret_ref_name=None,
+            client_secret_source="none",
+            redirect_uri=None,
+            default_role="user",
+            role_claim_key="groups",
+            admin_group_ids=[],
+            user_group_ids=[],
+            admin_emails=[],
+        )
+
+    admin_group_ids = _to_string_list(_to_json(config.admin_group_ids_json) if config.admin_group_ids_json else [])
+    user_group_ids = _to_string_list(_to_json(config.user_group_ids_json) if config.user_group_ids_json else [])
+    admin_emails = _to_lower_email_list(_to_json(config.admin_emails_json) if config.admin_emails_json else [])
+
+    secret_name = config.client_secret_ref.name if config.client_secret_ref else None
+    secret_source: str = "none"
+    if config.client_secret_ref_id is not None:
+        secret_source = "encrypted" if _is_internal_sso_secret_ref(config.client_secret_ref) else "reference"
+        if secret_source == "encrypted":
+            secret_name = "Stored Encrypted (local)"
+
+    return SsoConfigOut(
+        provider="entra",
+        source="database",
+        is_enabled=config.is_enabled,
+        tenant_id=config.tenant_id,
+        client_id=config.client_id,
+        client_secret_ref_id=config.client_secret_ref_id,
+        client_secret_ref_name=secret_name,
+        client_secret_source=secret_source,
+        redirect_uri=config.redirect_uri,
+        default_role="admin" if (config.default_role or "user") == "admin" else "user",
+        role_claim_key=config.role_claim_key or "groups",
+        admin_group_ids=admin_group_ids,
+        user_group_ids=user_group_ids,
+        admin_emails=admin_emails,
+    )
+
+
+def _runtime_entra_config(db: Session) -> dict[str, Any] | None:
+    config = db.query(SsoConfig).filter(SsoConfig.provider == "entra").first()
+    if config is not None:
+        if not config.is_enabled:
+            return None
+        if not config.tenant_id or not config.client_id or not config.client_secret_ref_id:
+            return None
+
+        if not config.client_secret_ref:
+            return None
+
+        secret_ref_payload = _to_json(config.client_secret_ref.reference_json)
+        resolved_secret = str(resolve_secrets(secret_ref_payload))
+        return {
+            "tenant_id": config.tenant_id,
+            "client_id": config.client_id,
+            "client_secret": resolved_secret,
+            "redirect_uri": config.redirect_uri,
+            "default_role": "admin" if (config.default_role or "user") == "admin" else "user",
+            "role_claim_key": config.role_claim_key or "groups",
+            "admin_group_ids": set(_to_string_list(_to_json(config.admin_group_ids_json) if config.admin_group_ids_json else [])),
+            "user_group_ids": set(_to_string_list(_to_json(config.user_group_ids_json) if config.user_group_ids_json else [])),
+            "admin_emails": set(_to_lower_email_list(_to_json(config.admin_emails_json) if config.admin_emails_json else [])),
+        }
+
+    if settings.entra_enabled and settings.entra_tenant_id and settings.entra_client_id and settings.entra_client_secret:
+        return {
+            "tenant_id": settings.entra_tenant_id,
+            "client_id": settings.entra_client_id,
+            "client_secret": settings.entra_client_secret,
+            "redirect_uri": settings.entra_redirect_uri or None,
+            "default_role": "user",
+            "role_claim_key": "groups",
+            "admin_group_ids": set(),
+            "user_group_ids": set(),
+            "admin_emails": set(settings.entra_admin_emails),
+        }
+
+    return None
+
+
+def _create_entra_oauth_client(tenant_id: str, client_id: str, client_secret: str):
+    runtime_oauth = OAuth()
+    runtime_oauth.register(
+        name="entra",
+        client_id=client_id,
+        client_secret=client_secret,
+        server_metadata_url=(
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration"
+        ),
+        client_kwargs={"scope": "openid profile email"},
+    )
+    return runtime_oauth.create_client("entra")
+
+
+def _extract_claim_values(userinfo: dict[str, Any], claim_key: str) -> set[str]:
+    raw = userinfo.get(claim_key)
+    if raw is None:
+        return set()
+
+    if isinstance(raw, list):
+        return {str(item).strip() for item in raw if str(item).strip()}
+
+    value = str(raw).strip()
+    if not value:
+        return set()
+    return {value}
+
+
+def _resolve_entra_role(email: str | None, group_values: set[str], config: dict[str, Any]) -> str:
+    admin_groups: set[str] = config.get("admin_group_ids", set())
+    user_groups: set[str] = config.get("user_group_ids", set())
+    admin_emails: set[str] = config.get("admin_emails", set())
+
+    if group_values & admin_groups:
+        return "admin"
+    if group_values & user_groups:
+        return "user"
+
+    if email and email.lower() in admin_emails:
+        return "admin"
+
+    default_role = str(config.get("default_role") or "user").lower()
+    return "admin" if default_role == "admin" else "user"
 
 
 def _current_user(
@@ -467,18 +735,34 @@ async def me(user: User = Depends(get_current_user)):
 
 
 @app.get("/api/auth/entra/login")
-async def entra_login(request: Request):
-    client = oauth.create_client("entra")
+async def entra_login(request: Request, db: Session = Depends(get_db_session)):
+    config = _runtime_entra_config(db)
+    if config is None:
+        raise HTTPException(status_code=400, detail="Entra SSO is not configured")
+
+    client = _create_entra_oauth_client(
+        str(config["tenant_id"]),
+        str(config["client_id"]),
+        str(config["client_secret"]),
+    )
     if client is None:
         raise HTTPException(status_code=400, detail="Entra SSO is not configured")
 
-    redirect_uri = settings.entra_redirect_uri or request.url_for("entra_callback")
+    redirect_uri = config.get("redirect_uri") or request.url_for("entra_callback")
     return await client.authorize_redirect(request, str(redirect_uri))
 
 
 @app.get("/api/auth/entra/callback", name="entra_callback")
 async def entra_callback(request: Request, db: Session = Depends(get_db_session)):
-    client = oauth.create_client("entra")
+    config = _runtime_entra_config(db)
+    if config is None:
+        raise HTTPException(status_code=400, detail="Entra SSO is not configured")
+
+    client = _create_entra_oauth_client(
+        str(config["tenant_id"]),
+        str(config["client_id"]),
+        str(config["client_secret"]),
+    )
     if client is None:
         raise HTTPException(status_code=400, detail="Entra SSO is not configured")
 
@@ -492,13 +776,16 @@ async def entra_callback(request: Request, db: Session = Depends(get_db_session)
     if not oid:
         raise HTTPException(status_code=400, detail="Entra token did not provide a stable user id")
 
+    role_claim_key = str(config.get("role_claim_key") or "groups")
+    group_values = _extract_claim_values(userinfo, role_claim_key)
+    role = _resolve_entra_role(email, group_values, config)
+
     user = db.query(User).filter(User.entra_oid == oid).first()
     if not user and email:
         user = db.query(User).filter(User.email == email).first()
 
     if not user:
         username = email or f"entra-{oid[:8]}"
-        role = "admin" if email and email in settings.entra_admin_emails else "user"
         user = User(
             username=username,
             email=email,
@@ -511,6 +798,23 @@ async def entra_callback(request: Request, db: Session = Depends(get_db_session)
         db.add(user)
         db.commit()
         db.refresh(user)
+    else:
+        updated = False
+        if email and user.email != email:
+            user.email = email
+            updated = True
+        if user.role != role:
+            user.role = role
+            updated = True
+        if not user.entra_oid:
+            user.entra_oid = oid
+            updated = True
+        if user.provider != "entra":
+            user.provider = "entra"
+            updated = True
+        if updated:
+            db.commit()
+            db.refresh(user)
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="User is inactive")
@@ -550,14 +854,153 @@ async def create_user(payload: UserCreateRequest, _: User = Depends(require_admi
 
 
 @app.put("/api/admin/users/{user_id}/role")
-async def update_user_role(user_id: int, role: str = Query(..., pattern="^(admin|user)$"), _: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+async def update_user_role(
+    user_id: int,
+    role: str = Query(..., pattern="^(admin|user)$"),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if current_admin.id == user.id and role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
+
+    if user.role == "admin" and role != "admin" and user.is_active:
+        active_admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()  # noqa: E712
+        if active_admin_count <= 1:
+            raise HTTPException(status_code=409, detail="At least one active admin is required")
+
     user.role = role
     db.commit()
     db.refresh(user)
     return _user_out(user)
+
+
+@app.put("/api/admin/users/{user_id}/status")
+async def update_user_status(
+    user_id: int,
+    is_active: bool = Query(...),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if current_admin.id == user.id and not is_active:
+        raise HTTPException(status_code=400, detail="You cannot disable your own account")
+
+    if user.role == "admin" and user.is_active and not is_active:
+        active_admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()  # noqa: E712
+        if active_admin_count <= 1:
+            raise HTTPException(status_code=409, detail="At least one active admin is required")
+
+    user.is_active = is_active
+    db.commit()
+    db.refresh(user)
+    return _user_out(user)
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if current_admin.id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    if user.role == "admin" and user.is_active:
+        active_admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()  # noqa: E712
+        if active_admin_count <= 1:
+            raise HTTPException(status_code=409, detail="At least one active admin is required")
+
+    db.delete(user)
+    db.commit()
+    return {"message": "User deleted"}
+
+
+@app.get("/api/admin/sso-config")
+async def get_sso_config(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+    config = db.query(SsoConfig).filter(SsoConfig.provider == "entra").first()
+    return _sso_config_out(config)
+
+
+@app.put("/api/admin/sso-config")
+async def update_sso_config(
+    payload: SsoConfigUpdateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    config = db.query(SsoConfig).filter(SsoConfig.provider == "entra").first()
+    if config is None:
+        config = SsoConfig(provider="entra")
+        db.add(config)
+        db.flush()
+
+    old_secret_ref_id = config.client_secret_ref_id
+    new_secret_ref_id: int | None = None
+
+    inline_secret = payload.client_secret.get_secret_value().strip() if payload.client_secret else ""
+    if payload.client_secret_ref_id is not None and inline_secret:
+        raise HTTPException(status_code=400, detail="Provide either client_secret_ref_id or client_secret, not both")
+
+    if payload.client_secret_ref_id is not None:
+        if payload.client_secret_ref_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid client_secret_ref_id")
+        secret_ref = db.query(SecretReference).filter(SecretReference.id == payload.client_secret_ref_id).first()
+        if not secret_ref:
+            raise HTTPException(status_code=404, detail="Secret reference not found")
+        new_secret_ref_id = payload.client_secret_ref_id
+
+    if inline_secret:
+        secret_ref = _create_internal_sso_secret_ref(
+            db,
+            str(payload.tenant_id or config.tenant_id or "tenant"),
+            str(payload.client_id or config.client_id or "client"),
+            inline_secret,
+        )
+        new_secret_ref_id = secret_ref.id
+
+    if "client_secret_ref_id" in payload.model_fields_set and payload.client_secret_ref_id is None and not inline_secret:
+        config.client_secret_ref_id = None
+    elif new_secret_ref_id is not None:
+        config.client_secret_ref_id = new_secret_ref_id
+
+    config.is_enabled = payload.is_enabled
+    config.tenant_id = payload.tenant_id.strip() if payload.tenant_id else None
+    config.client_id = payload.client_id.strip() if payload.client_id else None
+    config.redirect_uri = payload.redirect_uri.strip() if payload.redirect_uri else None
+    config.default_role = payload.default_role
+    config.role_claim_key = (payload.role_claim_key or "groups").strip() or "groups"
+    config.admin_group_ids_json = json.dumps(_to_string_list(payload.admin_group_ids))
+    config.user_group_ids_json = json.dumps(_to_string_list(payload.user_group_ids))
+    config.admin_emails_json = json.dumps(_to_lower_email_list(payload.admin_emails))
+    config.updated_at = datetime.utcnow()
+
+    if config.is_enabled:
+        if not config.tenant_id or not config.client_id:
+            raise HTTPException(status_code=400, detail="SSO enabled mode requires tenant_id and client_id")
+        if not config.client_secret_ref_id and not settings.entra_client_secret:
+            raise HTTPException(
+                status_code=400,
+                detail="SSO enabled mode requires client_secret_ref_id or environment ENTRA_CLIENT_SECRET",
+            )
+
+    db.commit()
+
+    if old_secret_ref_id != config.client_secret_ref_id:
+        _cleanup_orphaned_internal_sso_secret_ref(db, old_secret_ref_id)
+        db.commit()
+
+    db.refresh(config)
+    return _sso_config_out(config)
 
 
 @app.get("/api/admin/secret-references")
@@ -566,6 +1009,8 @@ async def list_secret_references(_: User = Depends(require_admin), db: Session =
         db.query(SecretReference)
         .filter(~SecretReference.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX))
         .filter(~SecretReference.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX))
+        .filter(~SecretReference.name.startswith(INTERNAL_GCP_SECRET_REF_PREFIX))
+        .filter(~SecretReference.name.startswith(INTERNAL_SSO_SECRET_REF_PREFIX))
         .order_by(SecretReference.name.asc())
         .all()
     )
@@ -578,7 +1023,12 @@ async def create_secret_reference(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db_session),
 ):
-    if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX) or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX):
+    if (
+        payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX)
+        or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX)
+        or payload.name.startswith(INTERNAL_GCP_SECRET_REF_PREFIX)
+        or payload.name.startswith(INTERNAL_SSO_SECRET_REF_PREFIX)
+    ):
         raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
 
     if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
@@ -615,7 +1065,12 @@ async def update_secret_reference(
         raise HTTPException(status_code=403, detail="Internal secret references cannot be modified")
 
     if payload.name is not None and payload.name != secret_ref.name:
-        if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX) or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX):
+        if (
+            payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX)
+            or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX)
+            or payload.name.startswith(INTERNAL_GCP_SECRET_REF_PREFIX)
+            or payload.name.startswith(INTERNAL_SSO_SECRET_REF_PREFIX)
+        ):
             raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
         if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
             raise HTTPException(status_code=409, detail="Secret reference name already exists")
@@ -652,6 +1107,8 @@ async def delete_secret_reference(
         or db.query(AwsAccountConfig).filter(AwsAccountConfig.access_key_ref_id == reference_id).first() is not None
         or db.query(AwsAccountConfig).filter(AwsAccountConfig.secret_access_key_ref_id == reference_id).first() is not None
         or db.query(AwsAccountConfig).filter(AwsAccountConfig.session_token_ref_id == reference_id).first() is not None
+        or db.query(GcpAccountConfig).filter(GcpAccountConfig.service_account_ref_id == reference_id).first() is not None
+        or db.query(SsoConfig).filter(SsoConfig.client_secret_ref_id == reference_id).first() is not None
     )
     if in_use:
         raise HTTPException(status_code=409, detail="Secret reference is in use by cloud account configuration")
@@ -1070,6 +1527,121 @@ async def delete_aws_account(
     return {"message": "AWS account deleted"}
 
 
+@app.get("/api/admin/gcp-accounts")
+async def list_gcp_accounts(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
+    accounts = db.query(GcpAccountConfig).order_by(GcpAccountConfig.name.asc()).all()
+    return [_gcp_account_out(account) for account in accounts]
+
+
+@app.post("/api/admin/gcp-accounts")
+async def create_gcp_account(
+    payload: GcpAccountCreateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    if db.query(GcpAccountConfig).filter(GcpAccountConfig.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="GCP account name already exists")
+
+    service_account_ref_id = payload.service_account_ref_id
+    inline_service_account_json = payload.service_account_json.get_secret_value().strip() if payload.service_account_json else ""
+    if service_account_ref_id is not None and inline_service_account_json:
+        raise HTTPException(status_code=400, detail="Provide either service_account_ref_id or service_account_json, not both")
+
+    if service_account_ref_id is not None:
+        secret_ref = db.query(SecretReference).filter(SecretReference.id == service_account_ref_id).first()
+        if not secret_ref:
+            raise HTTPException(status_code=404, detail="Secret reference not found")
+    elif inline_service_account_json:
+        secret_ref = _create_internal_gcp_secret_ref(db, payload.name, inline_service_account_json)
+        service_account_ref_id = secret_ref.id
+    else:
+        raise HTTPException(status_code=400, detail="Either service_account_ref_id or service_account_json is required")
+
+    account = GcpAccountConfig(
+        name=payload.name,
+        service_account_ref_id=service_account_ref_id,
+        project_ids_json=json.dumps(payload.project_ids) if payload.project_ids is not None else None,
+        is_active=payload.is_active,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _gcp_account_out(account)
+
+
+@app.put("/api/admin/gcp-accounts/{account_id}")
+async def update_gcp_account(
+    account_id: int,
+    payload: GcpAccountUpdateRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    account = db.query(GcpAccountConfig).filter(GcpAccountConfig.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="GCP account not found")
+
+    if payload.name is not None:
+        if payload.name != account.name and db.query(GcpAccountConfig).filter(GcpAccountConfig.name == payload.name).first():
+            raise HTTPException(status_code=409, detail="GCP account name already exists")
+        account.name = payload.name
+
+    old_service_account_ref_id = account.service_account_ref_id
+    new_service_account_ref_id: int | None = None
+    inline_service_account_json = payload.service_account_json.get_secret_value().strip() if payload.service_account_json else ""
+    if payload.service_account_ref_id is not None and inline_service_account_json:
+        raise HTTPException(status_code=400, detail="Provide either service_account_ref_id or service_account_json, not both")
+
+    if payload.service_account_ref_id is not None:
+        secret_ref = db.query(SecretReference).filter(SecretReference.id == payload.service_account_ref_id).first()
+        if not secret_ref:
+            raise HTTPException(status_code=404, detail="Secret reference not found")
+        new_service_account_ref_id = payload.service_account_ref_id
+
+    if inline_service_account_json:
+        secret_ref = _create_internal_gcp_secret_ref(db, account.name, inline_service_account_json)
+        new_service_account_ref_id = secret_ref.id
+
+    if new_service_account_ref_id is not None:
+        account.service_account_ref_id = new_service_account_ref_id
+
+    if "project_ids" in payload.model_fields_set:
+        account.project_ids_json = json.dumps(payload.project_ids) if payload.project_ids is not None else None
+    if payload.is_active is not None:
+        account.is_active = payload.is_active
+
+    db.commit()
+
+    if new_service_account_ref_id is not None and old_service_account_ref_id != new_service_account_ref_id:
+        _cleanup_orphaned_internal_gcp_secret_ref(db, old_service_account_ref_id)
+        db.commit()
+
+    db.refresh(account)
+    return _gcp_account_out(account)
+
+
+@app.delete("/api/admin/gcp-accounts/{account_id}")
+async def delete_gcp_account(
+    account_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    account = db.query(GcpAccountConfig).filter(GcpAccountConfig.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="GCP account not found")
+
+    if db.query(ScanProfile).filter(ScanProfile.scan_type == "gcp", ScanProfile.config_json.like(f'%"gcp_account_id": {account_id}%')).first():
+        raise HTTPException(status_code=409, detail="GCP account is in use by scan profiles")
+
+    old_service_account_ref_id = account.service_account_ref_id
+    db.delete(account)
+    db.commit()
+
+    _cleanup_orphaned_internal_gcp_secret_ref(db, old_service_account_ref_id)
+    db.commit()
+
+    return {"message": "GCP account deleted"}
+
+
 @app.get("/api/admin/scan-profiles")
 async def list_scan_profiles(_: User = Depends(require_admin), db: Session = Depends(get_db_session)):
     profiles = db.query(ScanProfile).order_by(ScanProfile.name.asc()).all()
@@ -1133,6 +1705,28 @@ async def update_scan_profile(
     db.refresh(profile)
     discovery_scheduler.sync_jobs()
     return _profile_out(profile)
+
+
+@app.delete("/api/admin/scan-profiles/{profile_id}")
+async def delete_scan_profile(
+    profile_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    run_ids = [row[0] for row in db.query(ScanRun.id).filter(ScanRun.profile_id == profile_id).all()]
+    if run_ids:
+        db.query(InventoryItem).filter(InventoryItem.run_id.in_(run_ids)).delete(synchronize_session=False)
+
+    db.query(ScanRun).filter(ScanRun.profile_id == profile_id).delete(synchronize_session=False)
+    db.delete(profile)
+    db.commit()
+
+    discovery_scheduler.sync_jobs()
+    return {"message": "Profile deleted"}
 
 
 @app.post("/api/admin/scan-profiles/{profile_id}/run")

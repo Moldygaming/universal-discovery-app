@@ -40,7 +40,7 @@ class ChangePasswordRequest(BaseModel):
 
 class ScanProfileCreateRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=150)
-    scan_type: Literal["icmp", "snmp", "azure", "aws"]
+    scan_type: Literal["icmp", "snmp", "azure", "aws", "gcp"]
     schedule_minutes: int = Field(60, ge=1, le=10080)
     is_enabled: bool = True
     config: dict[str, Any]
@@ -189,3 +189,60 @@ class AwsAccountOut(BaseModel):
     external_id: str | None
     regions: list[str] | None
     is_active: bool
+
+
+class GcpAccountCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=180)
+    service_account_ref_id: int | None = None
+    service_account_json: SecretStr | None = None
+    project_ids: list[str] | None = None
+    is_active: bool = True
+
+
+class GcpAccountUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    service_account_ref_id: int | None = None
+    service_account_json: SecretStr | None = None
+    project_ids: list[str] | None = None
+    is_active: bool | None = None
+
+
+class GcpAccountOut(BaseModel):
+    id: int
+    name: str
+    service_account_ref_id: int | None
+    service_account_ref_name: str | None
+    service_account_source: Literal["reference", "encrypted"]
+    project_ids: list[str] | None
+    is_active: bool
+
+
+class SsoConfigUpdateRequest(BaseModel):
+    is_enabled: bool
+    tenant_id: str | None = Field(default=None, min_length=3, max_length=180)
+    client_id: str | None = Field(default=None, min_length=3, max_length=180)
+    client_secret_ref_id: int | None = None
+    client_secret: SecretStr | None = None
+    redirect_uri: str | None = None
+    default_role: Literal["admin", "user"] = "user"
+    role_claim_key: str | None = Field(default="groups", min_length=1, max_length=100)
+    admin_group_ids: list[str] | None = None
+    user_group_ids: list[str] | None = None
+    admin_emails: list[str] | None = None
+
+
+class SsoConfigOut(BaseModel):
+    provider: Literal["entra"]
+    source: Literal["database", "environment", "disabled"]
+    is_enabled: bool
+    tenant_id: str | None
+    client_id: str | None
+    client_secret_ref_id: int | None
+    client_secret_ref_name: str | None
+    client_secret_source: Literal["reference", "encrypted", "none"]
+    redirect_uri: str | None
+    default_role: Literal["admin", "user"]
+    role_claim_key: str
+    admin_group_ids: list[str]
+    user_group_ids: list[str]
+    admin_emails: list[str]

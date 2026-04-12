@@ -39,6 +39,16 @@ def apply_runtime_schema_patches() -> None:
         if "external_id" not in aws_columns:
             connection.execute(text("ALTER TABLE aws_account_configs ADD COLUMN external_id VARCHAR(255)"))
 
+    if "gcp_account_configs" not in table_names:
+        return
+
+    gcp_columns = {column["name"] for column in inspector.get_columns("gcp_account_configs")}
+    with engine.begin() as connection:
+        if "project_ids_json" not in gcp_columns:
+            connection.execute(text("ALTER TABLE gcp_account_configs ADD COLUMN project_ids_json TEXT"))
+        if "is_active" not in gcp_columns:
+            connection.execute(text("ALTER TABLE gcp_account_configs ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+
 
 def get_db_session():
     db = SessionLocal()
