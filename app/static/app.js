@@ -16,6 +16,13 @@ const inventoryTableHead = document.getElementById("inventoryTableHead");
 const inventoryTableBody = document.getElementById("inventoryTableBody");
 const inventoryProviderFilter = document.getElementById("inventoryProviderFilter");
 const inventoryItemTypeFilter = document.getElementById("inventoryItemTypeFilter");
+const inventoryRowFilterMenuBtn = document.getElementById("inventoryRowFilterMenuBtn");
+const inventoryRowFilterMenu = document.getElementById("inventoryRowFilterMenu");
+const inventoryRowFilterOptions = document.getElementById("inventoryRowFilterOptions");
+const selectAllInventoryRowsBtn = document.getElementById("selectAllInventoryRowsBtn");
+const clearAllInventoryRowsBtn = document.getElementById("clearAllInventoryRowsBtn");
+const adminBladeItems = Array.from(document.querySelectorAll(".admin-blade-item"));
+const adminPanes = Array.from(document.querySelectorAll(".admin-pane"));
 const modelsPanel = document.getElementById("modelsPanel");
 const usersPanel = document.getElementById("usersPanel");
 const profilesPanel = document.getElementById("profilesPanel");
@@ -106,8 +113,14 @@ let wizardTenantId = null;
 let azureTenantCurrentSecretSource = null;
 let inventoryProviderTypeMap = {};
 let inventoryAllItemTypes = [];
+let inventoryLatestItems = [];
+let inventoryVisibleRowTypes = {};
+let activeAdminPane = "cloud-accounts";
 
 function logActivity(value) {
+  if (!activityPanel) {
+    return;
+  }
   const line = `[${new Date().toISOString()}] ${value}`;
   if (activityPanel.textContent === "Ready.") {
     activityPanel.textContent = line;
@@ -116,9 +129,11 @@ function logActivity(value) {
   activityPanel.textContent = `${line}\n${activityPanel.textContent}`;
 }
 
-clearActivityBtn.addEventListener("click", () => {
-  activityPanel.textContent = "Ready.";
-});
+if (clearActivityBtn && activityPanel) {
+  clearActivityBtn.addEventListener("click", () => {
+    activityPanel.textContent = "Ready.";
+  });
+}
 
 function consumeTokenFromQuery() {
   const url = new URL(window.location.href);
@@ -183,6 +198,24 @@ function setAdminVisibility(isAdmin) {
   });
 }
 
+function activateAdminPane(paneName) {
+  if (!adminBladeItems.length || !adminPanes.length) {
+    return;
+  }
+
+  const paneExists = adminPanes.some((pane) => pane.dataset.adminPane === paneName);
+  const resolvedPane = paneExists ? paneName : "cloud-accounts";
+  activeAdminPane = resolvedPane;
+
+  adminBladeItems.forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminPane === resolvedPane);
+  });
+
+  adminPanes.forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.adminPane !== resolvedPane);
+  });
+}
+
 function activateTab(tabName) {
   document.querySelectorAll(".menu-item[data-tab]").forEach((item) => {
     item.classList.toggle("active", item.dataset.tab === tabName);
@@ -191,6 +224,10 @@ function activateTab(tabName) {
   document.querySelectorAll(".tab-view").forEach((view) => {
     view.classList.toggle("hidden", view.id !== `view-${tabName}`);
   });
+
+  if (tabName === "admin") {
+    activateAdminPane(activeAdminPane);
+  }
 
   if (menuDropdown && !menuDropdown.classList.contains("hidden")) {
     menuDropdown.classList.add("hidden");
@@ -408,6 +445,263 @@ function setInventoryItemTypeOptions(provider = "", selectedValue = "") {
   if (selectedValue && itemTypes.includes(selectedValue)) {
     inventoryItemTypeFilter.value = selectedValue;
   }
+}
+
+function inventoryItemTypesFromRows(items) {
+  return Array.from(
+    new Set(
+      (Array.isArray(items) ? items : [])
+        .map((item) => String(item?.item_type || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => {
+    const leftLabel = prettifyItemTypeLabel(left);
+    const rightLabel = prettifyItemTypeLabel(right);
+    return leftLabel.localeCompare(rightLabel);
+  });
+}
+
+function syncInventoryRowTypeState(items) {
+  const itemTypes = inventoryItemTypesFromRows(items);
+  if (!itemTypes.length) {
+    inventoryVisibleRowTypes = {};
+    return;
+  }
+
+  const nextState = {};
+  itemTypes.forEach((itemType) => {
+    nextState[itemType] = inventoryVisibleRowTypes[itemType] !== false;
+  });
+  inventoryVisibleRowTypes = nextState;
+}
+
+function filteredInventoryRows(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return [];
+  }
+
+  const visibleTypes = new Set(
+    Object.entries(inventoryVisibleRowTypes)
+      .filter(([, isVisible]) => isVisible)
+      .map(([itemType]) => itemType),
+  );
+
+  if (!visibleTypes.size) {
+    return [];
+  }
+
+  return items.filter((item) => visibleTypes.has(String(item?.item_type || "").trim()));
+}
+
+function updateInventoryRowFilterButtonText() {
+  if (!inventoryRowFilterMenuBtn) {
+    return;
+  }
+  const totalCount = Object.keys(inventoryVisibleRowTypes).length;
+  const visibleCount = Object.values(inventoryVisibleRowTypes).filter(Boolean).length;
+
+  if (!totalCount) {
+    inventoryRowFilterMenuBtn.textContent = "No row types";
+    return;
+  }
+
+  if (visibleCount === totalCount) {
+    inventoryRowFilterMenuBtn.textContent = "All row types";
+    return;
+  }
+
+  if (!visibleCount) {
+    inventoryRowFilterMenuBtn.textContent = "No row types selected";
+    return;
+  }
+
+  inventoryRowFilterMenuBtn.textContent = `${visibleCount} of ${totalCount} selected`;
+}
+
+function renderInventoryRowToggles() {
+  if (!inventoryRowFilterOptions) {
+    return;
+  }
+
+  const itemTypes = Object.keys(inventoryVisibleRowTypes);
+  if (!itemTypes.length) {
+    inventoryRowFilterOptions.innerHTML = '<span class="hint">No row types available.</span>';
+    updateInventoryRowFilterButtonText();
+    return;
+  }
+
+  inventoryRowFilterOptions.innerHTML = itemTypes
+    .map((itemType) => {
+      const isVisible = inventoryVisibleRowTypes[itemType] !== false;
+      const checked = isVisible ? "checked" : "";
+      return `<label class="row-filter-option" title="${escapeHtml(itemType)}"><input type="checkbox" data-row-type-toggle="${escapeHtml(itemType)}" ${checked} /> <span>${escapeHtml(prettifyItemTypeLabel(itemType))}</span></label>`;
+    })
+    .join("");
+
+  inventoryRowFilterOptions.querySelectorAll("input[data-row-type-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const itemType = String(input.dataset.rowTypeToggle || "");
+      if (!itemType) {
+        return;
+      }
+      inventoryVisibleRowTypes[itemType] = Boolean(input.checked);
+      renderInventoryRowToggles();
+      renderInventoryTable(filteredInventoryRows(inventoryLatestItems), "No rows match selected row toggles.");
+    });
+  });
+
+  updateInventoryRowFilterButtonText();
+}
+
+function setAllInventoryRowToggles(isVisible) {
+  Object.keys(inventoryVisibleRowTypes).forEach((itemType) => {
+    inventoryVisibleRowTypes[itemType] = isVisible;
+  });
+  renderInventoryRowToggles();
+  renderInventoryTable(filteredInventoryRows(inventoryLatestItems), "No rows match selected row toggles.");
+}
+
+function renderInventoryTable(items, emptyMessage = "No inventory items found.") {
+  if (!inventoryTableBody) {
+    inventoryPanel.textContent = JSON.stringify(items, null, 2);
+    return;
+  }
+
+  const baseColumns = [
+    { key: "provider", label: "Provider" },
+    { key: "item_type", label: "Type" },
+    { key: "name", label: "Name" },
+    { key: "region", label: "Region" },
+    { key: "item_key", label: "Resource Key" },
+    { key: "parent_key", label: "Parent" },
+    { key: "discovered_at", label: "Discovered" },
+  ];
+
+  if (!Array.isArray(items) || !items.length) {
+    if (inventoryTableHead) {
+      inventoryTableHead.innerHTML = `<tr>${baseColumns.map((column) => `<th>${column.label}</th>`).join("")}</tr>`;
+    }
+    inventoryTableBody.innerHTML = `<tr><td colspan="${baseColumns.length}" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`;
+    return;
+  }
+
+  const hiddenAttributeKeys = new Set([
+    "id",
+    "name",
+    "type",
+    "location",
+    "properties",
+  ]);
+
+  const prioritizedAttributeKeys = [
+    "resource_group",
+    "subscription_id",
+    "api_version",
+    "property_provisioningState",
+    "identity_type",
+    "principal_id",
+    "tenant_id",
+    "managed_by",
+    "access_tier",
+    "replication_type",
+    "sku_name",
+    "sku_tier",
+    "sku_size",
+    "sku_family",
+    "sku_capacity",
+    "storage_sku_name",
+    "storage_sku_tier",
+    "resource_kind",
+    "kind",
+    "zones",
+    "extended_location",
+    "is_hns_enabled",
+    "minimum_tls_version",
+    "https_only",
+    "public_network_access",
+    "allow_blob_public_access",
+    "primary_location",
+    "secondary_location",
+    "status_of_primary",
+    "status_of_secondary",
+  ];
+
+  const attributeKeys = Array.from(
+    new Set(
+      items.flatMap((item) => {
+        if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
+          return [];
+        }
+        return Object.keys(item.attributes).filter((key) => !hiddenAttributeKeys.has(key));
+      }),
+    ),
+  ).sort((left, right) => {
+    const leftPriority = prioritizedAttributeKeys.indexOf(left);
+    const rightPriority = prioritizedAttributeKeys.indexOf(right);
+
+    if (leftPriority >= 0 || rightPriority >= 0) {
+      if (leftPriority < 0) {
+        return 1;
+      }
+      if (rightPriority < 0) {
+        return -1;
+      }
+      return leftPriority - rightPriority;
+    }
+
+    return left.localeCompare(right);
+  });
+
+  const columns = [
+    ...baseColumns,
+    ...attributeKeys.map((key) => ({
+      key: `attr:${key}`,
+      label: prettifyAttributeKey(key),
+      attributeKey: key,
+    })),
+  ];
+
+  if (inventoryTableHead) {
+    const headers = columns
+      .map((column) => `<th title="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>`)
+      .join("");
+    inventoryTableHead.innerHTML = `<tr>${headers}</tr>`;
+  }
+
+  const rows = items
+    .map((item) => {
+      const discovered = item.discovered_at ? new Date(item.discovered_at).toLocaleString() : "";
+      const attributes = item && typeof item.attributes === "object" && item.attributes !== null && !Array.isArray(item.attributes)
+        ? item.attributes
+        : {};
+
+      const values = [
+        prettifyProviderLabel(item.provider || ""),
+        prettifyItemTypeLabel(item.item_type || ""),
+        item.name || "",
+        item.region || "",
+        item.item_key || "",
+        item.parent_key || "",
+        discovered,
+        ...attributeKeys.map((key) => formatCellValue(attributes[key])),
+      ];
+
+      const cells = values
+        .map((value) => {
+          const safeValue = escapeHtml(value);
+          return `<td title="${safeValue}">${safeValue}</td>`;
+        })
+        .join("");
+
+      return `
+        <tr>
+          ${cells}
+        </tr>
+      `;
+    })
+    .join("");
+
+  inventoryTableBody.innerHTML = rows;
 }
 
 function toggleSecretRefProviderPanels() {
@@ -1078,147 +1372,14 @@ async function refreshInventory(provider, itemType, search) {
   }
 
   const items = await apiFetch(`/api/inventory/items?${params.toString()}`);
+  inventoryLatestItems = Array.isArray(items) ? items : [];
 
-  if (!inventoryTableBody) {
-    inventoryPanel.textContent = JSON.stringify(items, null, 2);
-    return;
-  }
-
-  const baseColumns = [
-    { key: "provider", label: "Provider" },
-    { key: "item_type", label: "Type" },
-    { key: "name", label: "Name" },
-    { key: "region", label: "Region" },
-    { key: "item_key", label: "Resource Key" },
-    { key: "parent_key", label: "Parent" },
-    { key: "discovered_at", label: "Discovered" },
-  ];
-
-  if (!Array.isArray(items) || !items.length) {
-    if (inventoryTableHead) {
-      inventoryTableHead.innerHTML = `<tr>${baseColumns.map((column) => `<th>${column.label}</th>`).join("")}</tr>`;
-    }
-    inventoryTableBody.innerHTML = `<tr><td colspan="${baseColumns.length}" class="empty-cell">No inventory items found.</td></tr>`;
-    return;
-  }
-
-  const hiddenAttributeKeys = new Set([
-    "id",
-    "name",
-    "type",
-    "location",
-    "properties",
-  ]);
-
-  const prioritizedAttributeKeys = [
-    "resource_group",
-    "subscription_id",
-    "api_version",
-    "property_provisioningState",
-    "identity_type",
-    "principal_id",
-    "tenant_id",
-    "managed_by",
-    "access_tier",
-    "replication_type",
-    "sku_name",
-    "sku_tier",
-    "sku_size",
-    "sku_family",
-    "sku_capacity",
-    "storage_sku_name",
-    "storage_sku_tier",
-    "resource_kind",
-    "kind",
-    "zones",
-    "extended_location",
-    "is_hns_enabled",
-    "minimum_tls_version",
-    "https_only",
-    "public_network_access",
-    "allow_blob_public_access",
-    "primary_location",
-    "secondary_location",
-    "status_of_primary",
-    "status_of_secondary",
-  ];
-
-  const attributeKeys = Array.from(
-    new Set(
-      items.flatMap((item) => {
-        if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
-          return [];
-        }
-        return Object.keys(item.attributes).filter((key) => !hiddenAttributeKeys.has(key));
-      }),
-    ),
-  ).sort((left, right) => {
-    const leftPriority = prioritizedAttributeKeys.indexOf(left);
-    const rightPriority = prioritizedAttributeKeys.indexOf(right);
-
-    if (leftPriority >= 0 || rightPriority >= 0) {
-      if (leftPriority < 0) {
-        return 1;
-      }
-      if (rightPriority < 0) {
-        return -1;
-      }
-      return leftPriority - rightPriority;
-    }
-
-    return left.localeCompare(right);
-  });
-
-  const columns = [
-    ...baseColumns,
-    ...attributeKeys.map((key) => ({
-      key: `attr:${key}`,
-      label: prettifyAttributeKey(key),
-      attributeKey: key,
-    })),
-  ];
-
-  if (inventoryTableHead) {
-    const headers = columns
-      .map((column) => `<th title="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>`)
-      .join("");
-    inventoryTableHead.innerHTML = `<tr>${headers}</tr>`;
-  }
-
-  const rows = items
-    .map((item) => {
-      const discovered = item.discovered_at ? new Date(item.discovered_at).toLocaleString() : "";
-      const attributes = item && typeof item.attributes === "object" && item.attributes !== null && !Array.isArray(item.attributes)
-        ? item.attributes
-        : {};
-
-      const values = [
-        prettifyProviderLabel(item.provider || ""),
-        prettifyItemTypeLabel(item.item_type || ""),
-        item.name || "",
-        item.region || "",
-        item.item_key || "",
-        item.parent_key || "",
-        discovered,
-        ...attributeKeys.map((key) => formatCellValue(attributes[key])),
-      ];
-
-      const cells = values
-        .map((value) => {
-          const safeValue = escapeHtml(value);
-          return `<td title="${safeValue}">${safeValue}</td>`;
-        })
-        .join("");
-
-      return `
-        <tr>
-          ${cells}
-        </tr>
-      `;
-    })
-    .join("");
-
-  inventoryTableBody.innerHTML = rows;
+  syncInventoryRowTypeState(inventoryLatestItems);
+  renderInventoryRowToggles();
+  renderInventoryTable(
+    filteredInventoryRows(inventoryLatestItems),
+    inventoryLatestItems.length ? "No rows match selected row toggles." : "No inventory items found.",
+  );
 }
 
 async function refreshModels() {
@@ -1402,6 +1563,16 @@ document.querySelectorAll(".menu-item[data-tab]").forEach((item) => {
   });
 });
 
+adminBladeItems.forEach((button) => {
+  button.addEventListener("click", () => {
+    const paneName = button.dataset.adminPane;
+    if (!paneName) {
+      return;
+    }
+    activateAdminPane(paneName);
+  });
+});
+
 refreshRunsBtn.addEventListener("click", async () => {
   try {
     await refreshRuns();
@@ -1430,6 +1601,40 @@ if (inventoryProviderFilter) {
     setInventoryItemTypeOptions(String(inventoryProviderFilter.value || ""));
   });
 }
+
+if (inventoryRowFilterMenuBtn && inventoryRowFilterMenu) {
+  inventoryRowFilterMenuBtn.addEventListener("click", () => {
+    const shouldShow = inventoryRowFilterMenu.classList.contains("hidden");
+    inventoryRowFilterMenu.classList.toggle("hidden", !shouldShow);
+  });
+}
+
+if (selectAllInventoryRowsBtn) {
+  selectAllInventoryRowsBtn.addEventListener("click", () => {
+    setAllInventoryRowToggles(true);
+    logActivity("Row toggles set: all visible");
+  });
+}
+
+if (clearAllInventoryRowsBtn) {
+  clearAllInventoryRowsBtn.addEventListener("click", () => {
+    setAllInventoryRowToggles(false);
+    logActivity("Row toggles set: all hidden");
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!inventoryRowFilterMenuBtn || !inventoryRowFilterMenu) {
+    return;
+  }
+
+  const target = event.target;
+  if (inventoryRowFilterMenuBtn.contains(target) || inventoryRowFilterMenu.contains(target)) {
+    return;
+  }
+
+  inventoryRowFilterMenu.classList.add("hidden");
+});
 
 refreshModelsBtn.addEventListener("click", async () => {
   try {
@@ -1902,5 +2107,12 @@ toggleProviderPanels();
 toggleSecretRefProviderPanels();
 toggleAzureSecretModePanels();
 setProfileEditState(false);
+updateInventoryRowFilterButtonText();
+renderInventoryRowToggles();
+activateAdminPane(activeAdminPane);
+
+if (inventoryRowFilterMenu) {
+  inventoryRowFilterMenu.classList.add("hidden");
+}
 
 initializeSession();

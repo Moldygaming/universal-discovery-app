@@ -196,6 +196,10 @@ button:hover {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.inline.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .actions-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -340,6 +344,56 @@ button:hover {
   color: var(--muted);
 }
 
+.admin-shell {
+  margin-top: 1.6rem;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.admin-blade {
+  position: sticky;
+  top: 4.2rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.admin-blade .small-head {
+  margin-bottom: 0.35rem;
+  padding: 0.2rem 0.15rem;
+}
+
+.admin-blade-item {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid rgba(31, 43, 34, 0.15);
+  border-radius: 10px;
+  min-height: 38px;
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+}
+
+.admin-blade-item.active {
+  background: linear-gradient(120deg, var(--accent), #1c7866);
+  color: #fff;
+}
+
+.admin-workspace {
+  min-width: 0;
+}
+
+.admin-workspace .admin-pane {
+  width: 100%;
+  margin: 0;
+}
+
 .provider-panel {
   border: 1px dashed rgba(31, 43, 34, 0.22);
   border-radius: 10px;
@@ -428,6 +482,70 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.row-filter-dropdown {
+  position: relative;
+  margin-top: 0.25rem;
+}
+
+.row-filter-menu-btn {
+  width: 100%;
+  text-align: left;
+  min-height: 40px;
+}
+
+.row-filter-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  width: min(360px, 90vw);
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(31, 43, 34, 0.14);
+  border-radius: 12px;
+  padding: 0.6rem;
+  box-shadow: var(--shadow);
+  z-index: 2000;
+}
+
+.row-filter-menu-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.row-filter-menu-actions .secondary {
+  width: auto;
+  min-height: 32px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.row-filter-options {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid rgba(31, 43, 34, 0.1);
+  border-radius: 10px;
+  padding: 0.4rem;
+  background: #fff;
+}
+
+.row-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.32rem 0.2rem;
+  margin: 0;
+  font-size: 0.83rem;
+  color: var(--text);
+}
+
+.row-filter-option input[type="checkbox"] {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
 }
 
 .table-wrap {
@@ -560,5 +678,17 @@ pre {
   .page {
     width: 94vw;
     margin-top: 1.2rem;
+  }
+
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-blade {
+    position: static;
+  }
+
+  .admin-blade-item {
+    width: 100%;
   }
 }

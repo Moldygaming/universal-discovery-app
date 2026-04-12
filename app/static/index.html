@@ -85,7 +85,7 @@
           <article class="card" data-reveal>
             <h2>Inventory Items</h2>
             <form id="inventoryFilterForm">
-              <div class="inline three">
+              <div class="inline four">
                 <label>Provider
                   <select id="inventoryProviderFilter" name="provider">
                     <option value="">All providers</option>
@@ -95,6 +95,18 @@
                   <select id="inventoryItemTypeFilter" name="item_type">
                     <option value="">All item types</option>
                   </select>
+                </label>
+                <label>Row Filter
+                  <div class="row-filter-dropdown">
+                    <button id="inventoryRowFilterMenuBtn" type="button" class="secondary row-filter-menu-btn">All row types</button>
+                    <div id="inventoryRowFilterMenu" class="row-filter-menu hidden">
+                      <div class="row-filter-menu-actions">
+                        <button id="selectAllInventoryRowsBtn" type="button" class="secondary">Select All</button>
+                        <button id="clearAllInventoryRowsBtn" type="button" class="secondary">Clear All</button>
+                      </div>
+                      <div id="inventoryRowFilterOptions" class="row-filter-options"></div>
+                    </div>
+                  </div>
                 </label>
                 <label>Search
                   <input name="search" placeholder="name or key" />
@@ -141,8 +153,20 @@
           </article>
         </section>
 
-        <section class="grid tab-view hidden" id="view-admin">
-          <article class="card" data-reveal>
+        <section class="tab-view hidden" id="view-admin">
+          <div class="admin-shell" data-reveal>
+            <aside class="admin-blade">
+              <p class="small-head">Admin Sections</p>
+              <button class="admin-blade-item active" data-admin-pane="cloud-accounts" type="button">Cloud Accounts</button>
+              <button class="admin-blade-item" data-admin-pane="scan-profile" type="button">Create Scan Profile</button>
+              <button class="admin-blade-item" data-admin-pane="secret-builder" type="button">Secret Reference Builder</button>
+              <button class="admin-blade-item" data-admin-pane="scan-profiles" type="button">Scan Profiles</button>
+              <button class="admin-blade-item" data-admin-pane="user-management" type="button">User Management</button>
+              <button class="admin-blade-item" data-admin-pane="activity" type="button">Activity</button>
+            </aside>
+
+            <div class="admin-workspace">
+              <article class="card admin-pane" data-admin-pane="cloud-accounts">
             <h2>Cloud Accounts</h2>
             <div class="actions-inline">
               <button id="openAzureTenantModalBtn" type="button">Configure Azure Tenant</button>
@@ -164,9 +188,9 @@
                 <div id="secretRefsPanel" class="list-panel"></div>
               </div>
             </div>
-          </article>
+              </article>
 
-          <article class="card" data-reveal>
+              <article class="card admin-pane hidden" data-admin-pane="scan-profile">
             <h2>Create Scan Profile</h2>
             <form id="profileForm">
               <p id="profileEditBanner" class="hint hidden">Editing profile</p>
@@ -203,9 +227,9 @@
                 <button id="cancelEditProfileBtn" class="secondary hidden" type="button">Cancel Edit</button>
               </div>
             </form>
-          </article>
+              </article>
 
-          <article class="card" data-reveal>
+              <article class="card admin-pane hidden" data-admin-pane="secret-builder">
             <h2>Secret Reference Builder</h2>
             <form id="secretBuilderForm">
               <div class="inline two">
@@ -266,15 +290,15 @@
               </div>
               <pre id="secretRefPreview" class="compact-pre">No secret reference generated yet.</pre>
             </form>
-          </article>
+              </article>
 
-          <article class="card" data-reveal>
+              <article class="card admin-pane hidden" data-admin-pane="scan-profiles">
             <h2>Scan Profiles</h2>
             <button id="refreshProfilesBtn">Refresh Profiles</button>
             <div id="profilesPanel" class="list-panel"></div>
-          </article>
+              </article>
 
-          <article class="card" data-reveal>
+              <article class="card admin-pane hidden" data-admin-pane="user-management">
             <h2>User Management</h2>
             <form id="userForm">
               <div class="inline two">
@@ -309,16 +333,18 @@
             </form>
             <button id="refreshUsersBtn">Refresh Users</button>
             <pre id="usersPanel">No users loaded.</pre>
-          </article>
-        </section>
-      </section>
+              </article>
 
-      <section class="results" data-reveal>
-        <div class="results-header">
-          <h2>Activity</h2>
-          <button id="clearActivityBtn" class="secondary">Clear</button>
-        </div>
-        <pre id="activityPanel">Ready.</pre>
+              <article id="adminActivityCard" class="card admin-pane hidden" data-admin-pane="activity">
+            <div class="results-header">
+              <h2>Activity</h2>
+              <button id="clearActivityBtn" class="secondary">Clear</button>
+            </div>
+            <pre id="activityPanel">Ready.</pre>
+              </article>
+            </div>
+          </div>
+        </section>
       </section>
 
       <div id="azureTenantModal" class="modal hidden">
