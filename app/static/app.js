@@ -15,12 +15,16 @@ const inventoryPanel = document.getElementById("inventoryPanel");
 const inventoryTableHead = document.getElementById("inventoryTableHead");
 const inventoryTableBody = document.getElementById("inventoryTableBody");
 const inventoryProviderFilter = document.getElementById("inventoryProviderFilter");
-const inventoryItemTypeFilter = document.getElementById("inventoryItemTypeFilter");
-const inventoryRowFilterMenuBtn = document.getElementById("inventoryRowFilterMenuBtn");
-const inventoryRowFilterMenu = document.getElementById("inventoryRowFilterMenu");
-const inventoryRowFilterOptions = document.getElementById("inventoryRowFilterOptions");
-const selectAllInventoryRowsBtn = document.getElementById("selectAllInventoryRowsBtn");
-const clearAllInventoryRowsBtn = document.getElementById("clearAllInventoryRowsBtn");
+const inventoryItemTypeMenuBtn = document.getElementById("inventoryItemTypeMenuBtn");
+const inventoryItemTypeMenu = document.getElementById("inventoryItemTypeMenu");
+const inventoryItemTypeOptions = document.getElementById("inventoryItemTypeOptions");
+const selectAllInventoryItemTypesBtn = document.getElementById("selectAllInventoryItemTypesBtn");
+const clearAllInventoryItemTypesBtn = document.getElementById("clearAllInventoryItemTypesBtn");
+const inventoryAttributeFilterMenuBtn = document.getElementById("inventoryAttributeFilterMenuBtn");
+const inventoryAttributeFilterMenu = document.getElementById("inventoryAttributeFilterMenu");
+const inventoryAttributeFilterOptions = document.getElementById("inventoryAttributeFilterOptions");
+const selectAllInventoryAttributesBtn = document.getElementById("selectAllInventoryAttributesBtn");
+const clearAllInventoryAttributesBtn = document.getElementById("clearAllInventoryAttributesBtn");
 const inventoryViewMode = document.getElementById("inventoryViewMode");
 const adminBladeItems = Array.from(document.querySelectorAll(".admin-blade-item"));
 const adminPanes = Array.from(document.querySelectorAll(".admin-pane"));
@@ -129,7 +133,8 @@ let azureTenantCurrentSecretSource = null;
 let inventoryProviderTypeMap = {};
 let inventoryAllItemTypes = [];
 let inventoryLatestItems = [];
-let inventoryVisibleRowTypes = {};
+let inventoryVisibleItemTypes = {};
+let inventoryVisibleAttributes = {};
 let activeAdminPane = "cloud-accounts";
 let scanProfiles = [];
 
@@ -439,28 +444,71 @@ function formatCellValue(value) {
   return String(value);
 }
 
-function setInventoryItemTypeOptions(provider = "", selectedValue = "") {
-  if (!inventoryItemTypeFilter) {
-    return;
-  }
+const INVENTORY_HIDDEN_ATTRIBUTE_KEYS = new Set([
+  "id",
+  "name",
+  "type",
+  "location",
+  "properties",
+]);
 
+const INVENTORY_PRIORITIZED_ATTRIBUTE_KEYS = [
+  "resource_group",
+  "subscription_id",
+  "api_version",
+  "property_provisioningState",
+  "identity_type",
+  "principal_id",
+  "tenant_id",
+  "managed_by",
+  "access_tier",
+  "replication_type",
+  "sku_name",
+  "sku_tier",
+  "sku_size",
+  "sku_family",
+  "sku_capacity",
+  "storage_sku_name",
+  "storage_sku_tier",
+  "resource_kind",
+  "kind",
+  "zones",
+  "extended_location",
+  "is_hns_enabled",
+  "minimum_tls_version",
+  "https_only",
+  "public_network_access",
+  "allow_blob_public_access",
+  "primary_location",
+  "secondary_location",
+  "status_of_primary",
+  "status_of_secondary",
+];
+
+function inventoryItemTypesForProvider(provider = "") {
   const source = provider && inventoryProviderTypeMap[provider]
     ? inventoryProviderTypeMap[provider]
     : inventoryAllItemTypes;
 
-  const itemTypes = Array.isArray(source) ? source : [];
-  inventoryItemTypeFilter.innerHTML = '<option value="">All item types</option>';
-
-  itemTypes.forEach((itemType) => {
-    const option = document.createElement("option");
-    option.value = itemType;
-    option.textContent = prettifyItemTypeLabel(itemType);
-    inventoryItemTypeFilter.appendChild(option);
+  return (Array.isArray(source) ? source : []).slice().sort((left, right) => {
+    const leftLabel = prettifyItemTypeLabel(left);
+    const rightLabel = prettifyItemTypeLabel(right);
+    return leftLabel.localeCompare(rightLabel);
   });
+}
 
-  if (selectedValue && itemTypes.includes(selectedValue)) {
-    inventoryItemTypeFilter.value = selectedValue;
+function syncInventoryItemTypeState(provider = "") {
+  const itemTypes = inventoryItemTypesForProvider(provider);
+  if (!itemTypes.length) {
+    inventoryVisibleItemTypes = {};
+    return;
   }
+
+  const nextState = {};
+  itemTypes.forEach((itemType) => {
+    nextState[itemType] = inventoryVisibleItemTypes[itemType] !== false;
+  });
+  inventoryVisibleItemTypes = nextState;
 }
 
 function inventoryItemTypesFromRows(items) {
@@ -477,27 +525,13 @@ function inventoryItemTypesFromRows(items) {
   });
 }
 
-function syncInventoryRowTypeState(items) {
-  const itemTypes = inventoryItemTypesFromRows(items);
-  if (!itemTypes.length) {
-    inventoryVisibleRowTypes = {};
-    return;
-  }
-
-  const nextState = {};
-  itemTypes.forEach((itemType) => {
-    nextState[itemType] = inventoryVisibleRowTypes[itemType] !== false;
-  });
-  inventoryVisibleRowTypes = nextState;
-}
-
 function filteredInventoryRows(items) {
   if (!Array.isArray(items) || !items.length) {
     return [];
   }
 
   const visibleTypes = new Set(
-    Object.entries(inventoryVisibleRowTypes)
+    Object.entries(inventoryVisibleItemTypes)
       .filter(([, isVisible]) => isVisible)
       .map(([itemType]) => itemType),
   );
@@ -509,72 +543,183 @@ function filteredInventoryRows(items) {
   return items.filter((item) => visibleTypes.has(String(item?.item_type || "").trim()));
 }
 
-function updateInventoryRowFilterButtonText() {
-  if (!inventoryRowFilterMenuBtn) {
+function updateInventoryItemTypeButtonText() {
+  if (!inventoryItemTypeMenuBtn) {
     return;
   }
-  const totalCount = Object.keys(inventoryVisibleRowTypes).length;
-  const visibleCount = Object.values(inventoryVisibleRowTypes).filter(Boolean).length;
+  const totalCount = Object.keys(inventoryVisibleItemTypes).length;
+  const visibleCount = Object.values(inventoryVisibleItemTypes).filter(Boolean).length;
 
   if (!totalCount) {
-    inventoryRowFilterMenuBtn.textContent = "No row types";
+    inventoryItemTypeMenuBtn.textContent = "No item types";
     return;
   }
 
   if (visibleCount === totalCount) {
-    inventoryRowFilterMenuBtn.textContent = "All row types";
+    inventoryItemTypeMenuBtn.textContent = "All item types";
     return;
   }
 
   if (!visibleCount) {
-    inventoryRowFilterMenuBtn.textContent = "No row types selected";
+    inventoryItemTypeMenuBtn.textContent = "No item types selected";
     return;
   }
 
-  inventoryRowFilterMenuBtn.textContent = `${visibleCount} of ${totalCount} selected`;
+  inventoryItemTypeMenuBtn.textContent = `${visibleCount} of ${totalCount} selected`;
 }
 
-function renderInventoryRowToggles() {
-  if (!inventoryRowFilterOptions) {
+function renderInventoryItemTypeToggles() {
+  if (!inventoryItemTypeOptions) {
     return;
   }
 
-  const itemTypes = Object.keys(inventoryVisibleRowTypes);
+  const itemTypes = Object.keys(inventoryVisibleItemTypes);
   if (!itemTypes.length) {
-    inventoryRowFilterOptions.innerHTML = '<span class="hint">No row types available.</span>';
-    updateInventoryRowFilterButtonText();
+    inventoryItemTypeOptions.innerHTML = '<span class="hint">No item types available.</span>';
+    updateInventoryItemTypeButtonText();
     return;
   }
 
-  inventoryRowFilterOptions.innerHTML = itemTypes
+  inventoryItemTypeOptions.innerHTML = itemTypes
     .map((itemType) => {
-      const isVisible = inventoryVisibleRowTypes[itemType] !== false;
+      const isVisible = inventoryVisibleItemTypes[itemType] !== false;
       const checked = isVisible ? "checked" : "";
-      return `<label class="row-filter-option" title="${escapeHtml(itemType)}"><input type="checkbox" data-row-type-toggle="${escapeHtml(itemType)}" ${checked} /> <span>${escapeHtml(prettifyItemTypeLabel(itemType))}</span></label>`;
+      return `<label class="row-filter-option" title="${escapeHtml(itemType)}"><input type="checkbox" data-item-type-toggle="${escapeHtml(itemType)}" ${checked} /> <span>${escapeHtml(prettifyItemTypeLabel(itemType))}</span></label>`;
     })
     .join("");
 
-  inventoryRowFilterOptions.querySelectorAll("input[data-row-type-toggle]").forEach((input) => {
+  inventoryItemTypeOptions.querySelectorAll("input[data-item-type-toggle]").forEach((input) => {
     input.addEventListener("change", () => {
-      const itemType = String(input.dataset.rowTypeToggle || "");
+      const itemType = String(input.dataset.itemTypeToggle || "");
       if (!itemType) {
         return;
       }
-      inventoryVisibleRowTypes[itemType] = Boolean(input.checked);
-      renderInventoryRowToggles();
-      renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected row toggles.");
+      inventoryVisibleItemTypes[itemType] = Boolean(input.checked);
+      renderInventoryItemTypeToggles();
+      renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected filters.");
     });
   });
 
-  updateInventoryRowFilterButtonText();
+  updateInventoryItemTypeButtonText();
 }
 
-function setAllInventoryRowToggles(isVisible) {
-  Object.keys(inventoryVisibleRowTypes).forEach((itemType) => {
-    inventoryVisibleRowTypes[itemType] = isVisible;
+function setAllInventoryItemTypeToggles(isVisible) {
+  Object.keys(inventoryVisibleItemTypes).forEach((itemType) => {
+    inventoryVisibleItemTypes[itemType] = isVisible;
   });
-  renderInventoryRowToggles();
-  renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected row toggles.");
+  renderInventoryItemTypeToggles();
+  renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected filters.");
+}
+
+function inventoryAttributeKeysFromRows(items) {
+  return Array.from(
+    new Set(
+      items.flatMap((item) => {
+        if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
+          return [];
+        }
+        return Object.keys(item.attributes).filter((key) => !INVENTORY_HIDDEN_ATTRIBUTE_KEYS.has(key));
+      }),
+    ),
+  ).sort((left, right) => {
+    const leftPriority = INVENTORY_PRIORITIZED_ATTRIBUTE_KEYS.indexOf(left);
+    const rightPriority = INVENTORY_PRIORITIZED_ATTRIBUTE_KEYS.indexOf(right);
+
+    if (leftPriority >= 0 || rightPriority >= 0) {
+      if (leftPriority < 0) {
+        return 1;
+      }
+      if (rightPriority < 0) {
+        return -1;
+      }
+      return leftPriority - rightPriority;
+    }
+
+    return left.localeCompare(right);
+  });
+}
+
+function syncInventoryAttributeState(items) {
+  const attributeKeys = inventoryAttributeKeysFromRows(items);
+  if (!attributeKeys.length) {
+    inventoryVisibleAttributes = {};
+    return;
+  }
+
+  const nextState = {};
+  attributeKeys.forEach((key) => {
+    nextState[key] = inventoryVisibleAttributes[key] !== false;
+  });
+  inventoryVisibleAttributes = nextState;
+}
+
+function updateInventoryAttributeFilterButtonText() {
+  if (!inventoryAttributeFilterMenuBtn) {
+    return;
+  }
+
+  const totalCount = Object.keys(inventoryVisibleAttributes).length;
+  const visibleCount = Object.values(inventoryVisibleAttributes).filter(Boolean).length;
+
+  if (!totalCount) {
+    inventoryAttributeFilterMenuBtn.textContent = "No attributes";
+    return;
+  }
+
+  if (visibleCount === totalCount) {
+    inventoryAttributeFilterMenuBtn.textContent = "All attributes";
+    return;
+  }
+
+  if (!visibleCount) {
+    inventoryAttributeFilterMenuBtn.textContent = "No attributes selected";
+    return;
+  }
+
+  inventoryAttributeFilterMenuBtn.textContent = `${visibleCount} of ${totalCount} selected`;
+}
+
+function renderInventoryAttributeToggles() {
+  if (!inventoryAttributeFilterOptions) {
+    return;
+  }
+
+  const attributeKeys = Object.keys(inventoryVisibleAttributes);
+  if (!attributeKeys.length) {
+    inventoryAttributeFilterOptions.innerHTML = '<span class="hint">No attributes available.</span>';
+    updateInventoryAttributeFilterButtonText();
+    return;
+  }
+
+  inventoryAttributeFilterOptions.innerHTML = attributeKeys
+    .map((attributeKey) => {
+      const isVisible = inventoryVisibleAttributes[attributeKey] !== false;
+      const checked = isVisible ? "checked" : "";
+      return `<label class="row-filter-option" title="${escapeHtml(attributeKey)}"><input type="checkbox" data-attribute-key-toggle="${escapeHtml(attributeKey)}" ${checked} /> <span>${escapeHtml(prettifyAttributeKey(attributeKey))}</span></label>`;
+    })
+    .join("");
+
+  inventoryAttributeFilterOptions.querySelectorAll("input[data-attribute-key-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const attributeKey = String(input.dataset.attributeKeyToggle || "");
+      if (!attributeKey) {
+        return;
+      }
+      inventoryVisibleAttributes[attributeKey] = Boolean(input.checked);
+      renderInventoryAttributeToggles();
+      renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected filters.");
+    });
+  });
+
+  updateInventoryAttributeFilterButtonText();
+}
+
+function setAllInventoryAttributeToggles(isVisible) {
+  Object.keys(inventoryVisibleAttributes).forEach((key) => {
+    inventoryVisibleAttributes[key] = isVisible;
+  });
+  renderInventoryAttributeToggles();
+  renderInventoryResults(filteredInventoryRows(inventoryLatestItems), "No rows match selected filters.");
 }
 
 function renderInventoryTable(items, emptyMessage = "No inventory items found.") {
@@ -601,72 +746,7 @@ function renderInventoryTable(items, emptyMessage = "No inventory items found.")
     return;
   }
 
-  const hiddenAttributeKeys = new Set([
-    "id",
-    "name",
-    "type",
-    "location",
-    "properties",
-  ]);
-
-  const prioritizedAttributeKeys = [
-    "resource_group",
-    "subscription_id",
-    "api_version",
-    "property_provisioningState",
-    "identity_type",
-    "principal_id",
-    "tenant_id",
-    "managed_by",
-    "access_tier",
-    "replication_type",
-    "sku_name",
-    "sku_tier",
-    "sku_size",
-    "sku_family",
-    "sku_capacity",
-    "storage_sku_name",
-    "storage_sku_tier",
-    "resource_kind",
-    "kind",
-    "zones",
-    "extended_location",
-    "is_hns_enabled",
-    "minimum_tls_version",
-    "https_only",
-    "public_network_access",
-    "allow_blob_public_access",
-    "primary_location",
-    "secondary_location",
-    "status_of_primary",
-    "status_of_secondary",
-  ];
-
-  const attributeKeys = Array.from(
-    new Set(
-      items.flatMap((item) => {
-        if (!item || typeof item.attributes !== "object" || item.attributes === null || Array.isArray(item.attributes)) {
-          return [];
-        }
-        return Object.keys(item.attributes).filter((key) => !hiddenAttributeKeys.has(key));
-      }),
-    ),
-  ).sort((left, right) => {
-    const leftPriority = prioritizedAttributeKeys.indexOf(left);
-    const rightPriority = prioritizedAttributeKeys.indexOf(right);
-
-    if (leftPriority >= 0 || rightPriority >= 0) {
-      if (leftPriority < 0) {
-        return 1;
-      }
-      if (rightPriority < 0) {
-        return -1;
-      }
-      return leftPriority - rightPriority;
-    }
-
-    return left.localeCompare(right);
-  });
+  const attributeKeys = inventoryAttributeKeysFromRows(items).filter((key) => inventoryVisibleAttributes[key] !== false);
 
   const columns = [
     ...baseColumns,
@@ -723,6 +803,7 @@ function renderInventoryTable(items, emptyMessage = "No inventory items found.")
 function renderInventoryCollectiveTable(items, emptyMessage = "No inventory items found.") {
   const summaryColumns = [
     { key: "provider", label: "Provider" },
+    { key: "scope", label: "Account / Tenant" },
     { key: "item_type", label: "Type" },
     { key: "count", label: "Resource Count" },
     { key: "regions", label: "Regions" },
@@ -739,14 +820,61 @@ function renderInventoryCollectiveTable(items, emptyMessage = "No inventory item
   }
 
   const grouped = new Map();
+
+  const resolveResourceScope = (item) => {
+    const provider = String(item?.provider || "").trim().toLowerCase();
+    const attributes = item && typeof item.attributes === "object" && item.attributes !== null
+      ? item.attributes
+      : {};
+
+    const pickFirst = (...values) => values.find((value) => String(value || "").trim()) || null;
+
+    if (provider === "azure") {
+      const tenantId = pickFirst(attributes.tenant_id, attributes.property_tenantId);
+      if (tenantId) {
+        const value = String(tenantId).trim();
+        return { key: `tenant:${value}`, label: `Tenant ${value}` };
+      }
+
+      const subscriptionId = pickFirst(attributes.subscription_id, attributes.property_subscriptionId);
+      if (subscriptionId) {
+        const value = String(subscriptionId).trim();
+        return { key: `subscription:${value}`, label: `Subscription ${value}` };
+      }
+    }
+
+    if (provider === "aws") {
+      const accountId = pickFirst(
+        attributes.account_id,
+        attributes.aws_account_id,
+        attributes.owner_account_id,
+        attributes.owner_id,
+      );
+      if (accountId) {
+        const value = String(accountId).trim();
+        return { key: `account:${value}`, label: `Account ${value}` };
+      }
+    }
+
+    const genericScope = pickFirst(attributes.tenant_id, attributes.subscription_id, attributes.account_id);
+    if (genericScope) {
+      const value = String(genericScope).trim();
+      return { key: `scope:${value}`, label: value };
+    }
+
+    return { key: "default", label: "Default" };
+  };
+
   items.forEach((item) => {
     const provider = String(item?.provider || "").trim();
     const itemType = String(item?.item_type || "").trim();
-    const key = `${provider}||${itemType}`;
+    const scope = resolveResourceScope(item);
+    const key = `${provider}||${scope.key}||${itemType}`;
 
     if (!grouped.has(key)) {
       grouped.set(key, {
         provider,
+        scopeLabel: scope.label,
         itemType,
         count: 0,
         regions: new Set(),
@@ -778,6 +906,10 @@ function renderInventoryCollectiveTable(items, emptyMessage = "No inventory item
       if (providerCompare !== 0) {
         return providerCompare;
       }
+      const scopeCompare = left.scopeLabel.localeCompare(right.scopeLabel);
+      if (scopeCompare !== 0) {
+        return scopeCompare;
+      }
       return prettifyItemTypeLabel(left.itemType).localeCompare(prettifyItemTypeLabel(right.itemType));
     })
     .map((entry) => {
@@ -786,6 +918,7 @@ function renderInventoryCollectiveTable(items, emptyMessage = "No inventory item
 
       const values = [
         prettifyProviderLabel(entry.provider),
+        entry.scopeLabel,
         prettifyItemTypeLabel(entry.itemType),
         String(entry.count),
         regions,
@@ -807,6 +940,9 @@ function renderInventoryCollectiveTable(items, emptyMessage = "No inventory item
 }
 
 function renderInventoryResults(items, emptyMessage = "No inventory items found.") {
+  syncInventoryAttributeState(items);
+  renderInventoryAttributeToggles();
+
   const mode = String(inventoryViewMode?.value || "individual");
   if (mode === "collective") {
     renderInventoryCollectiveTable(items, emptyMessage);
@@ -1593,12 +1729,11 @@ async function refreshRuns() {
 }
 
 async function refreshInventoryFilterOptions() {
-  if (!inventoryProviderFilter || !inventoryItemTypeFilter) {
+  if (!inventoryProviderFilter) {
     return;
   }
 
   const previousProvider = String(inventoryProviderFilter.value || "");
-  const previousItemType = String(inventoryItemTypeFilter.value || "");
 
   const options = await apiFetch("/api/inventory/filter-options");
   const providers = Array.isArray(options.providers) ? options.providers : [];
@@ -1622,21 +1757,18 @@ async function refreshInventoryFilterOptions() {
     inventoryProviderFilter.value = previousProvider;
   }
 
-  setInventoryItemTypeOptions(String(inventoryProviderFilter.value || ""), previousItemType);
+  syncInventoryItemTypeState(String(inventoryProviderFilter.value || ""));
+  renderInventoryItemTypeToggles();
 }
 
-async function refreshInventory(provider, itemType, search) {
+async function refreshInventory(provider, search) {
   const resolvedProvider = provider !== undefined ? provider : String(inventoryProviderFilter?.value || "");
-  const resolvedItemType = itemType !== undefined ? itemType : String(inventoryItemTypeFilter?.value || "");
   const resolvedSearch = search !== undefined ? search : String(inventoryFilterForm?.elements?.search?.value || "");
 
   const params = new URLSearchParams();
   params.set("limit", "300");
   if (resolvedProvider) {
     params.set("provider", resolvedProvider);
-  }
-  if (resolvedItemType) {
-    params.set("item_type", resolvedItemType);
   }
   if (resolvedSearch) {
     params.set("search", resolvedSearch);
@@ -1645,11 +1777,11 @@ async function refreshInventory(provider, itemType, search) {
   const items = await apiFetch(`/api/inventory/items?${params.toString()}`);
   inventoryLatestItems = Array.isArray(items) ? items : [];
 
-  syncInventoryRowTypeState(inventoryLatestItems);
-  renderInventoryRowToggles();
+  syncInventoryItemTypeState(resolvedProvider);
+  renderInventoryItemTypeToggles();
   renderInventoryResults(
     filteredInventoryRows(inventoryLatestItems),
-    inventoryLatestItems.length ? "No rows match selected row toggles." : "No inventory items found.",
+    inventoryLatestItems.length ? "No rows match selected filters." : "No inventory items found.",
   );
 }
 
@@ -1857,11 +1989,10 @@ refreshRunsBtn.addEventListener("click", async () => {
 inventoryFilterForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const provider = String(inventoryProviderFilter?.value || "").trim();
-  const itemType = String(inventoryItemTypeFilter?.value || "").trim();
   const search = String(inventoryFilterForm.elements.search?.value || "").trim();
 
   try {
-    await refreshInventory(provider, itemType, search);
+    await refreshInventory(provider, search);
     logActivity("Inventory refreshed with filters");
   } catch (error) {
     logActivity(String(error));
@@ -1870,7 +2001,8 @@ inventoryFilterForm.addEventListener("submit", async (event) => {
 
 if (inventoryProviderFilter) {
   inventoryProviderFilter.addEventListener("change", () => {
-    setInventoryItemTypeOptions(String(inventoryProviderFilter.value || ""));
+    syncInventoryItemTypeState(String(inventoryProviderFilter.value || ""));
+    renderInventoryItemTypeToggles();
   });
 }
 
@@ -1878,43 +2010,74 @@ if (inventoryViewMode) {
   inventoryViewMode.addEventListener("change", () => {
     renderInventoryResults(
       filteredInventoryRows(inventoryLatestItems),
-      inventoryLatestItems.length ? "No rows match selected row toggles." : "No inventory items found.",
+      inventoryLatestItems.length ? "No rows match selected filters." : "No inventory items found.",
     );
   });
 }
 
-if (inventoryRowFilterMenuBtn && inventoryRowFilterMenu) {
-  inventoryRowFilterMenuBtn.addEventListener("click", () => {
-    const shouldShow = inventoryRowFilterMenu.classList.contains("hidden");
-    inventoryRowFilterMenu.classList.toggle("hidden", !shouldShow);
+if (inventoryItemTypeMenuBtn && inventoryItemTypeMenu) {
+  inventoryItemTypeMenuBtn.addEventListener("click", () => {
+    const shouldShow = inventoryItemTypeMenu.classList.contains("hidden");
+    inventoryItemTypeMenu.classList.toggle("hidden", !shouldShow);
+    if (shouldShow && inventoryAttributeFilterMenu) {
+      inventoryAttributeFilterMenu.classList.add("hidden");
+    }
   });
 }
 
-if (selectAllInventoryRowsBtn) {
-  selectAllInventoryRowsBtn.addEventListener("click", () => {
-    setAllInventoryRowToggles(true);
-    logActivity("Row toggles set: all visible");
+if (selectAllInventoryItemTypesBtn) {
+  selectAllInventoryItemTypesBtn.addEventListener("click", () => {
+    setAllInventoryItemTypeToggles(true);
+    logActivity("Item type filters set: all visible");
   });
 }
 
-if (clearAllInventoryRowsBtn) {
-  clearAllInventoryRowsBtn.addEventListener("click", () => {
-    setAllInventoryRowToggles(false);
-    logActivity("Row toggles set: all hidden");
+if (clearAllInventoryItemTypesBtn) {
+  clearAllInventoryItemTypesBtn.addEventListener("click", () => {
+    setAllInventoryItemTypeToggles(false);
+    logActivity("Item type filters set: all hidden");
+  });
+}
+
+if (inventoryAttributeFilterMenuBtn && inventoryAttributeFilterMenu) {
+  inventoryAttributeFilterMenuBtn.addEventListener("click", () => {
+    const shouldShow = inventoryAttributeFilterMenu.classList.contains("hidden");
+    inventoryAttributeFilterMenu.classList.toggle("hidden", !shouldShow);
+    if (shouldShow && inventoryItemTypeMenu) {
+      inventoryItemTypeMenu.classList.add("hidden");
+    }
+  });
+}
+
+if (selectAllInventoryAttributesBtn) {
+  selectAllInventoryAttributesBtn.addEventListener("click", () => {
+    setAllInventoryAttributeToggles(true);
+    logActivity("Attribute filters set: all visible");
+  });
+}
+
+if (clearAllInventoryAttributesBtn) {
+  clearAllInventoryAttributesBtn.addEventListener("click", () => {
+    setAllInventoryAttributeToggles(false);
+    logActivity("Attribute filters set: all hidden");
   });
 }
 
 document.addEventListener("click", (event) => {
-  if (!inventoryRowFilterMenuBtn || !inventoryRowFilterMenu) {
+  if (!inventoryItemTypeMenuBtn || !inventoryItemTypeMenu || !inventoryAttributeFilterMenuBtn || !inventoryAttributeFilterMenu) {
     return;
   }
 
   const target = event.target;
-  if (inventoryRowFilterMenuBtn.contains(target) || inventoryRowFilterMenu.contains(target)) {
+  const insideItemType = inventoryItemTypeMenuBtn.contains(target) || inventoryItemTypeMenu.contains(target);
+  const insideAttribute = inventoryAttributeFilterMenuBtn.contains(target) || inventoryAttributeFilterMenu.contains(target);
+
+  if (insideItemType || insideAttribute) {
     return;
   }
 
-  inventoryRowFilterMenu.classList.add("hidden");
+  inventoryItemTypeMenu.classList.add("hidden");
+  inventoryAttributeFilterMenu.classList.add("hidden");
 });
 
 refreshModelsBtn.addEventListener("click", async () => {
@@ -2532,12 +2695,18 @@ toggleSecretRefProviderPanels();
 toggleAzureSecretModePanels();
 toggleAwsAuthModePanels();
 setProfileEditState(false);
-updateInventoryRowFilterButtonText();
-renderInventoryRowToggles();
+updateInventoryItemTypeButtonText();
+renderInventoryItemTypeToggles();
+updateInventoryAttributeFilterButtonText();
+renderInventoryAttributeToggles();
 activateAdminPane(activeAdminPane);
 
-if (inventoryRowFilterMenu) {
-  inventoryRowFilterMenu.classList.add("hidden");
+if (inventoryItemTypeMenu) {
+  inventoryItemTypeMenu.classList.add("hidden");
+}
+
+if (inventoryAttributeFilterMenu) {
+  inventoryAttributeFilterMenu.classList.add("hidden");
 }
 
 initializeSession();

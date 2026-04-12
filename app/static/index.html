@@ -92,19 +92,26 @@
                   </select>
                 </label>
                 <label>Item Type
-                  <select id="inventoryItemTypeFilter" name="item_type">
-                    <option value="">All item types</option>
-                  </select>
-                </label>
-                <label>Row Filter
                   <div class="row-filter-dropdown">
-                    <button id="inventoryRowFilterMenuBtn" type="button" class="secondary row-filter-menu-btn">All row types</button>
-                    <div id="inventoryRowFilterMenu" class="row-filter-menu hidden">
+                    <button id="inventoryItemTypeMenuBtn" type="button" class="secondary row-filter-menu-btn">All item types</button>
+                    <div id="inventoryItemTypeMenu" class="row-filter-menu hidden">
                       <div class="row-filter-menu-actions">
-                        <button id="selectAllInventoryRowsBtn" type="button" class="secondary">Select All</button>
-                        <button id="clearAllInventoryRowsBtn" type="button" class="secondary">Clear All</button>
+                        <button id="selectAllInventoryItemTypesBtn" type="button" class="secondary">Select All</button>
+                        <button id="clearAllInventoryItemTypesBtn" type="button" class="secondary">Clear All</button>
                       </div>
-                      <div id="inventoryRowFilterOptions" class="row-filter-options"></div>
+                      <div id="inventoryItemTypeOptions" class="row-filter-options"></div>
+                    </div>
+                  </div>
+                </label>
+                <label>Attribute Filter
+                  <div class="row-filter-dropdown">
+                    <button id="inventoryAttributeFilterMenuBtn" type="button" class="secondary row-filter-menu-btn">All attributes</button>
+                    <div id="inventoryAttributeFilterMenu" class="row-filter-menu hidden">
+                      <div class="row-filter-menu-actions">
+                        <button id="selectAllInventoryAttributesBtn" type="button" class="secondary">Select All</button>
+                        <button id="clearAllInventoryAttributesBtn" type="button" class="secondary">Clear All</button>
+                      </div>
+                      <div id="inventoryAttributeFilterOptions" class="row-filter-options"></div>
                     </div>
                   </div>
                 </label>
