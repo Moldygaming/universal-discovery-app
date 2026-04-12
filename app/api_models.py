@@ -146,18 +146,30 @@ class AzureTenantCreateProfileRequest(BaseModel):
 
 class AwsAccountCreateRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=180)
-    access_key_ref_id: int
-    secret_access_key_ref_id: int
+    auth_mode: Literal["access_key", "assume_role"] = "access_key"
+    credential_source: Literal["reference", "inline_encrypted"] = "reference"
+    access_key_ref_id: int | None = None
+    secret_access_key_ref_id: int | None = None
+    access_key_id: str | None = Field(default=None, min_length=1, max_length=180)
+    secret_access_key: SecretStr | None = None
     session_token_ref_id: int | None = None
+    role_arn: str | None = None
+    external_id: str | None = None
     regions: list[str] | None = None
     is_active: bool = True
 
 
 class AwsAccountUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=180)
+    auth_mode: Literal["access_key", "assume_role"] | None = None
+    credential_source: Literal["reference", "inline_encrypted"] | None = None
     access_key_ref_id: int | None = None
     secret_access_key_ref_id: int | None = None
+    access_key_id: str | None = Field(default=None, min_length=1, max_length=180)
+    secret_access_key: SecretStr | None = None
     session_token_ref_id: int | None = None
+    role_arn: str | None = None
+    external_id: str | None = None
     regions: list[str] | None = None
     is_active: bool | None = None
 
@@ -165,11 +177,15 @@ class AwsAccountUpdateRequest(BaseModel):
 class AwsAccountOut(BaseModel):
     id: int
     name: str
-    access_key_ref_id: int
-    access_key_ref_name: str
-    secret_access_key_ref_id: int
-    secret_access_key_ref_name: str
+    auth_mode: Literal["access_key", "assume_role"]
+    credential_source: Literal["reference", "inline_encrypted"] | None
+    access_key_ref_id: int | None
+    access_key_ref_name: str | None
+    secret_access_key_ref_id: int | None
+    secret_access_key_ref_name: str | None
     session_token_ref_id: int | None
     session_token_ref_name: str | None
+    role_arn: str | None
+    external_id: str | None
     regions: list[str] | None
     is_active: bool

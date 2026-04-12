@@ -85,7 +85,7 @@
           <article class="card" data-reveal>
             <h2>Inventory Items</h2>
             <form id="inventoryFilterForm">
-              <div class="inline four">
+              <div class="inline five">
                 <label>Provider
                   <select id="inventoryProviderFilter" name="provider">
                     <option value="">All providers</option>
@@ -110,6 +110,12 @@
                 </label>
                 <label>Search
                   <input name="search" placeholder="name or key" />
+                </label>
+                <label>View Mode
+                  <select id="inventoryViewMode" name="view_mode">
+                    <option value="individual" selected>Individual Resources</option>
+                    <option value="collective">Resource Totals</option>
+                  </select>
                 </label>
               </div>
               <button type="submit">Load Inventory</button>
@@ -385,6 +391,37 @@
             <label>Subscription IDs (comma separated, optional)
               <input name="subscription_ids" placeholder="sub1,sub2" />
             </label>
+            <label>Scanning Profile Setup
+              <select id="azureTenantProfileMode" name="profile_mode">
+                <option value="create_new" selected>Create New Scanning Profile</option>
+                <option value="use_existing">Use Scanning Profile</option>
+              </select>
+            </label>
+            <div id="azureTenantProfileCreatePanel" class="provider-panel">
+              <label>Profile Name (optional)
+                <input id="azureTenantProfileName" name="profile_name" placeholder="azure-my-tenant-profile" />
+              </label>
+              <div class="inline three">
+                <label>Schedule Minutes
+                  <input id="azureTenantProfileSchedule" name="profile_schedule_minutes" type="number" min="1" max="10080" value="60" />
+                </label>
+                <label>Max Resources / Subscription
+                  <input id="azureTenantProfileMaxResources" name="profile_max_resources_per_subscription" type="number" min="1" max="50000" value="2000" />
+                </label>
+                <label>Enabled
+                  <select id="azureTenantProfileEnabled" name="profile_is_enabled">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="azureTenantProfileExistingPanel" class="provider-panel hidden">
+              <label>Scanning Profile
+                <select id="azureTenantExistingProfileSelect" name="existing_profile_id"></select>
+              </label>
+              <p class="hint">Selected scanning profile config will be updated with this tenant configuration.</p>
+            </div>
             <label>Active
               <select name="is_active">
                 <option value="true" selected>true</option>
@@ -406,17 +443,50 @@
             <label>Account Name
               <input name="name" required placeholder="prod-aws-account" />
             </label>
-            <div class="inline two">
-              <label>Access Key Reference
-                <select id="awsAccessKeyRefSelect" name="access_key_ref_id" required></select>
+            <label>Authentication Mode
+              <select id="awsAuthMode" name="auth_mode">
+                <option value="access_key" selected>Access Key</option>
+                <option value="assume_role">Assume Role</option>
+              </select>
+            </label>
+            <div id="awsAccessKeyPanel" class="provider-panel">
+              <label>Credential Source
+                <select id="awsCredentialSource" name="credential_source">
+                  <option value="reference" selected>Secret Reference (recommended)</option>
+                  <option value="inline_encrypted">Direct Credentials (stored encrypted)</option>
+                </select>
               </label>
-              <label>Secret Access Key Reference
-                <select id="awsSecretAccessKeyRefSelect" name="secret_access_key_ref_id" required></select>
+              <div id="awsAccessKeyRefPanel">
+              <div class="inline two">
+                <label>Access Key Reference
+                  <select id="awsAccessKeyRefSelect" name="access_key_ref_id"></select>
+                </label>
+                <label>Secret Access Key Reference
+                  <select id="awsSecretAccessKeyRefSelect" name="secret_access_key_ref_id"></select>
+                </label>
+              </div>
+              </div>
+              <div id="awsAccessKeyInlinePanel" class="provider-panel hidden">
+                <label>Access Key ID (stored encrypted)
+                  <input id="awsAccessKeyIdInput" name="access_key_id" autocomplete="off" placeholder="AKIA..." />
+                </label>
+                <label>Secret Access Key (stored encrypted)
+                  <input id="awsSecretAccessKeyInput" name="secret_access_key" type="password" autocomplete="new-password" placeholder="Enter AWS secret access key" />
+                </label>
+                <p class="hint">When editing, leave blank to keep existing encrypted values.</p>
+              </div>
+              <label>Session Token Reference (optional)
+                <select id="awsSessionTokenRefSelect" name="session_token_ref_id"></select>
               </label>
             </div>
-            <label>Session Token Reference (optional)
-              <select id="awsSessionTokenRefSelect" name="session_token_ref_id"></select>
-            </label>
+            <div id="awsAssumeRolePanel" class="provider-panel hidden">
+              <label>Role ARN
+                <input id="awsRoleArnInput" name="role_arn" placeholder="arn:aws:iam::123456789012:role/CrossAccountInventoryRole" />
+              </label>
+              <label>External ID (optional)
+                <input id="awsExternalIdInput" name="external_id" placeholder="third-party-external-id" />
+              </label>
+            </div>
             <label>Regions (comma separated, optional)
               <input name="regions" placeholder="us-east-1,us-west-2" />
             </label>

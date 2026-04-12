@@ -83,9 +83,12 @@ class AwsAccountConfig(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    auth_mode: Mapped[str] = mapped_column(String(24), nullable=False, default="access_key")
     access_key_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
     secret_access_key_ref_id: Mapped[int] = mapped_column(ForeignKey("secret_references.id"), nullable=False)
     session_token_ref_id: Mapped[int | None] = mapped_column(ForeignKey("secret_references.id"), nullable=True)
+    role_arn: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     regions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

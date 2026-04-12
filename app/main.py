@@ -63,6 +63,8 @@ if settings.entra_enabled and settings.entra_tenant_id and settings.entra_client
 
 security = HTTPBearer(auto_error=False)
 INTERNAL_AZURE_SECRET_REF_PREFIX = "__internal_azure_"
+INTERNAL_AWS_SECRET_REF_PREFIX = "__internal_aws_"
+INTERNAL_AWS_INLINE_SECRET_REF_PREFIX = "__internal_aws_inline_"
 
 
 def _to_json(raw: str | None):
@@ -162,6 +164,18 @@ def _is_internal_azure_secret_ref(secret_ref: SecretReference | None) -> bool:
     return bool(secret_ref and secret_ref.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX))
 
 
+def _is_internal_aws_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return bool(secret_ref and secret_ref.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX))
+
+
+def _is_internal_aws_inline_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return bool(secret_ref and secret_ref.name.startswith(INTERNAL_AWS_INLINE_SECRET_REF_PREFIX))
+
+
+def _is_internal_secret_ref(secret_ref: SecretReference | None) -> bool:
+    return _is_internal_azure_secret_ref(secret_ref) or _is_internal_aws_secret_ref(secret_ref)
+
+
 def _create_internal_azure_secret_ref(db: Session, tenant_name: str, client_secret: str) -> SecretReference:
     name = f"{INTERNAL_AZURE_SECRET_REF_PREFIX}{tenant_name}-{int(time.time() * 1000)}"
     reference = build_local_encrypted_secret_reference(client_secret)
@@ -192,20 +206,110 @@ def _cleanup_orphaned_internal_azure_secret_ref(db: Session, secret_ref_id: int 
     db.delete(secret_ref)
 
 
+def _get_or_create_internal_aws_env_secret_ref(db: Session, env_key: str) -> SecretReference:
+    name = f"{INTERNAL_AWS_SECRET_REF_PREFIX}{env_key.lower()}"
+    existing = db.query(SecretReference).filter(SecretReference.name == name).first()
+    if existing:
+        return existing
+
+    reference = {
+        "$secret": {
+            "provider": "env",
+            "key": env_key,
+        }
+    }
+    parsed = validate_secret_reference(reference)
+    secret_ref = SecretReference(
+        name=name,
+        provider=parsed.provider,
+        reference_json=json.dumps(reference),
+    )
+    db.add(secret_ref)
+    db.flush()
+    return secret_ref
+
+
+def _ensure_internal_aws_source_secret_refs(db: Session) -> tuple[SecretReference, SecretReference]:
+    access_ref = _get_or_create_internal_aws_env_secret_ref(db, "AWS_ACCESS_KEY_ID")
+    secret_ref = _get_or_create_internal_aws_env_secret_ref(db, "AWS_SECRET_ACCESS_KEY")
+    return access_ref, secret_ref
+
+
+def _create_internal_aws_inline_secret_ref(db: Session, account_name: str, field: str, secret_value: str) -> SecretReference:
+    safe_account_name = account_name.strip().replace(" ", "-").lower() or "aws-account"
+    safe_field = field.strip().replace(" ", "-").lower() or "value"
+    name = f"{INTERNAL_AWS_INLINE_SECRET_REF_PREFIX}{safe_account_name}-{safe_field}-{int(time.time() * 1000)}"
+
+    reference = build_local_encrypted_secret_reference(secret_value)
+    parsed = validate_secret_reference(reference)
+    secret_ref = SecretReference(
+        name=name,
+        provider=parsed.provider,
+        reference_json=json.dumps(reference),
+    )
+    db.add(secret_ref)
+    db.flush()
+    return secret_ref
+
+
+def _cleanup_orphaned_internal_aws_inline_secret_ref(db: Session, secret_ref_id: int | None) -> None:
+    if not secret_ref_id:
+        return
+
+    secret_ref = db.query(SecretReference).filter(SecretReference.id == secret_ref_id).first()
+    if not _is_internal_aws_inline_secret_ref(secret_ref):
+        return
+
+    in_use = db.query(AwsAccountConfig).filter(AwsAccountConfig.access_key_ref_id == secret_ref_id).first()
+    if in_use is None:
+        in_use = db.query(AwsAccountConfig).filter(AwsAccountConfig.secret_access_key_ref_id == secret_ref_id).first()
+    if in_use is None:
+        in_use = db.query(AwsAccountConfig).filter(AwsAccountConfig.session_token_ref_id == secret_ref_id).first()
+    if in_use is not None:
+        return
+
+    db.delete(secret_ref)
+
+
+def _aws_credential_source(account: AwsAccountConfig) -> str | None:
+    if (account.auth_mode or "access_key") != "access_key":
+        return None
+
+    if _is_internal_aws_inline_secret_ref(account.access_key_ref) and _is_internal_aws_inline_secret_ref(account.secret_access_key_ref):
+        return "inline_encrypted"
+    return "reference"
+
+
 def _aws_account_out(account: AwsAccountConfig) -> AwsAccountOut:
     regions = _to_json(account.regions_json) if account.regions_json else None
     if regions is not None and not isinstance(regions, list):
         regions = None
 
+    credential_source = _aws_credential_source(account)
+    access_key_ref_name = account.access_key_ref.name if account.access_key_ref else None
+    secret_access_key_ref_name = account.secret_access_key_ref.name if account.secret_access_key_ref else None
+
+    if credential_source == "inline_encrypted":
+        access_key_ref_name = "Stored Encrypted (local)"
+        secret_access_key_ref_name = "Stored Encrypted (local)"
+
+    if (account.auth_mode or "access_key") == "assume_role":
+        access_key_ref_name = None
+        secret_access_key_ref_name = None
+
     return AwsAccountOut(
         id=account.id,
         name=account.name,
+        auth_mode=account.auth_mode or "access_key",
+        credential_source=credential_source,
         access_key_ref_id=account.access_key_ref_id,
-        access_key_ref_name=account.access_key_ref.name if account.access_key_ref else "unknown",
+        access_key_ref_name=access_key_ref_name,
         secret_access_key_ref_id=account.secret_access_key_ref_id,
-        secret_access_key_ref_name=account.secret_access_key_ref.name if account.secret_access_key_ref else "unknown",
+        secret_access_key_ref_name=secret_access_key_ref_name,
         session_token_ref_id=account.session_token_ref_id,
         session_token_ref_name=account.session_token_ref.name if account.session_token_ref else None,
+        role_arn=account.role_arn,
+        external_id=account.external_id,
         regions=regions,
         is_active=account.is_active,
     )
@@ -461,6 +565,7 @@ async def list_secret_references(_: User = Depends(require_admin), db: Session =
     refs = (
         db.query(SecretReference)
         .filter(~SecretReference.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX))
+        .filter(~SecretReference.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX))
         .order_by(SecretReference.name.asc())
         .all()
     )
@@ -473,7 +578,7 @@ async def create_secret_reference(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db_session),
 ):
-    if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX):
+    if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX) or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX):
         raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
 
     if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
@@ -506,11 +611,11 @@ async def update_secret_reference(
     if not secret_ref:
         raise HTTPException(status_code=404, detail="Secret reference not found")
 
-    if _is_internal_azure_secret_ref(secret_ref):
+    if _is_internal_secret_ref(secret_ref):
         raise HTTPException(status_code=403, detail="Internal secret references cannot be modified")
 
     if payload.name is not None and payload.name != secret_ref.name:
-        if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX):
+        if payload.name.startswith(INTERNAL_AZURE_SECRET_REF_PREFIX) or payload.name.startswith(INTERNAL_AWS_SECRET_REF_PREFIX):
             raise HTTPException(status_code=400, detail="Secret reference name prefix is reserved")
         if db.query(SecretReference).filter(SecretReference.name == payload.name).first():
             raise HTTPException(status_code=409, detail="Secret reference name already exists")
@@ -539,7 +644,7 @@ async def delete_secret_reference(
     if not secret_ref:
         raise HTTPException(status_code=404, detail="Secret reference not found")
 
-    if _is_internal_azure_secret_ref(secret_ref):
+    if _is_internal_secret_ref(secret_ref):
         raise HTTPException(status_code=403, detail="Internal secret references cannot be deleted directly")
 
     in_use = (
@@ -729,10 +834,50 @@ async def create_aws_account(
     if db.query(AwsAccountConfig).filter(AwsAccountConfig.name == payload.name).first():
         raise HTTPException(status_code=409, detail="AWS account name already exists")
 
-    access_key_ref = db.query(SecretReference).filter(SecretReference.id == payload.access_key_ref_id).first()
-    secret_access_key_ref = db.query(SecretReference).filter(SecretReference.id == payload.secret_access_key_ref_id).first()
-    if not access_key_ref or not secret_access_key_ref:
-        raise HTTPException(status_code=404, detail="Referenced secret not found")
+    auth_mode = payload.auth_mode
+    credential_source = payload.credential_source
+    access_key_ref_id = payload.access_key_ref_id
+    secret_access_key_ref_id = payload.secret_access_key_ref_id
+
+    if auth_mode == "access_key":
+        if credential_source == "reference":
+            if access_key_ref_id is None or secret_access_key_ref_id is None:
+                raise HTTPException(status_code=400, detail="Access key mode with reference source requires access key and secret key references")
+
+            access_key_ref = db.query(SecretReference).filter(SecretReference.id == access_key_ref_id).first()
+            secret_access_key_ref = db.query(SecretReference).filter(SecretReference.id == secret_access_key_ref_id).first()
+            if not access_key_ref or not secret_access_key_ref:
+                raise HTTPException(status_code=404, detail="Referenced secret not found")
+        else:
+            raw_access_key_id = (payload.access_key_id or "").strip()
+            raw_secret_access_key = payload.secret_access_key.get_secret_value().strip() if payload.secret_access_key else ""
+            if not raw_access_key_id or not raw_secret_access_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Access key mode with inline encrypted source requires access_key_id and secret_access_key",
+                )
+
+            inline_access_ref = _create_internal_aws_inline_secret_ref(
+                db,
+                payload.name,
+                "access-key-id",
+                raw_access_key_id,
+            )
+            inline_secret_ref = _create_internal_aws_inline_secret_ref(
+                db,
+                payload.name,
+                "secret-access-key",
+                raw_secret_access_key,
+            )
+            access_key_ref_id = inline_access_ref.id
+            secret_access_key_ref_id = inline_secret_ref.id
+    else:
+        if not payload.role_arn:
+            raise HTTPException(status_code=400, detail="Assume role mode requires role_arn")
+
+        source_access_ref, source_secret_ref = _ensure_internal_aws_source_secret_refs(db)
+        access_key_ref_id = source_access_ref.id
+        secret_access_key_ref_id = source_secret_ref.id
 
     session_token_ref = None
     if payload.session_token_ref_id is not None:
@@ -742,9 +887,12 @@ async def create_aws_account(
 
     account = AwsAccountConfig(
         name=payload.name,
-        access_key_ref_id=payload.access_key_ref_id,
-        secret_access_key_ref_id=payload.secret_access_key_ref_id,
+        auth_mode=auth_mode,
+        access_key_ref_id=access_key_ref_id,
+        secret_access_key_ref_id=secret_access_key_ref_id,
         session_token_ref_id=payload.session_token_ref_id,
+        role_arn=payload.role_arn if auth_mode == "assume_role" else None,
+        external_id=payload.external_id if auth_mode == "assume_role" else None,
         regions_json=json.dumps(payload.regions) if payload.regions is not None else None,
         is_active=payload.is_active,
     )
@@ -770,17 +918,101 @@ async def update_aws_account(
             raise HTTPException(status_code=409, detail="AWS account name already exists")
         account.name = payload.name
 
-    if payload.access_key_ref_id is not None:
-        ref = db.query(SecretReference).filter(SecretReference.id == payload.access_key_ref_id).first()
-        if not ref:
-            raise HTTPException(status_code=404, detail="Access key secret reference not found")
-        account.access_key_ref_id = payload.access_key_ref_id
+    old_access_key_ref_id = account.access_key_ref_id
+    old_secret_access_key_ref_id = account.secret_access_key_ref_id
+    old_session_token_ref_id = account.session_token_ref_id
 
-    if payload.secret_access_key_ref_id is not None:
-        ref = db.query(SecretReference).filter(SecretReference.id == payload.secret_access_key_ref_id).first()
-        if not ref:
-            raise HTTPException(status_code=404, detail="Secret access key reference not found")
-        account.secret_access_key_ref_id = payload.secret_access_key_ref_id
+    previous_auth_mode = account.auth_mode or "access_key"
+    effective_auth_mode = payload.auth_mode if payload.auth_mode is not None else (account.auth_mode or "access_key")
+    if payload.auth_mode is not None:
+        account.auth_mode = payload.auth_mode
+    elif account.auth_mode is None:
+        account.auth_mode = "access_key"
+
+    if effective_auth_mode == "assume_role":
+        effective_role_arn = payload.role_arn if payload.role_arn is not None else account.role_arn
+        if not effective_role_arn:
+            raise HTTPException(status_code=400, detail="Assume role mode requires role_arn")
+
+        account.role_arn = effective_role_arn
+        if "external_id" in payload.model_fields_set:
+            account.external_id = payload.external_id
+
+        source_access_ref, source_secret_ref = _ensure_internal_aws_source_secret_refs(db)
+        account.access_key_ref_id = source_access_ref.id
+        account.secret_access_key_ref_id = source_secret_ref.id
+    else:
+        current_credential_source = _aws_credential_source(account) or "reference"
+        effective_credential_source = payload.credential_source or current_credential_source
+
+        if effective_credential_source == "reference":
+            has_existing_reference_credentials = bool(
+                account.access_key_ref_id
+                and account.secret_access_key_ref_id
+                and not _is_internal_aws_secret_ref(account.access_key_ref)
+                and not _is_internal_aws_secret_ref(account.secret_access_key_ref)
+            )
+
+            if payload.access_key_ref_id is not None:
+                ref = db.query(SecretReference).filter(SecretReference.id == payload.access_key_ref_id).first()
+                if not ref:
+                    raise HTTPException(status_code=404, detail="Access key secret reference not found")
+                account.access_key_ref_id = payload.access_key_ref_id
+
+            if payload.secret_access_key_ref_id is not None:
+                ref = db.query(SecretReference).filter(SecretReference.id == payload.secret_access_key_ref_id).first()
+                if not ref:
+                    raise HTTPException(status_code=404, detail="Secret access key reference not found")
+                account.secret_access_key_ref_id = payload.secret_access_key_ref_id
+
+            if payload.auth_mode == "access_key" and previous_auth_mode != "access_key":
+                if payload.access_key_ref_id is None or payload.secret_access_key_ref_id is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Switching to access key mode with reference source requires access key and secret key references",
+                    )
+
+            if not has_existing_reference_credentials and (
+                payload.access_key_ref_id is None or payload.secret_access_key_ref_id is None
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Reference credential source requires access key and secret key references",
+                )
+        else:
+            raw_access_key_id = (payload.access_key_id or "").strip()
+            raw_secret_access_key = payload.secret_access_key.get_secret_value().strip() if payload.secret_access_key else ""
+
+            if raw_access_key_id:
+                inline_access_ref = _create_internal_aws_inline_secret_ref(
+                    db,
+                    account.name,
+                    "access-key-id",
+                    raw_access_key_id,
+                )
+                account.access_key_ref_id = inline_access_ref.id
+            elif current_credential_source != "inline_encrypted":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Inline encrypted credential source requires access_key_id when switching to inline mode",
+                )
+
+            if raw_secret_access_key:
+                inline_secret_ref = _create_internal_aws_inline_secret_ref(
+                    db,
+                    account.name,
+                    "secret-access-key",
+                    raw_secret_access_key,
+                )
+                account.secret_access_key_ref_id = inline_secret_ref.id
+            elif current_credential_source != "inline_encrypted":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Inline encrypted credential source requires secret_access_key when switching to inline mode",
+                )
+
+        account.role_arn = None
+        account.external_id = None
 
     if "session_token_ref_id" in payload.model_fields_set:
         if payload.session_token_ref_id is None:
@@ -798,6 +1030,15 @@ async def update_aws_account(
 
     db.commit()
     db.refresh(account)
+
+    if old_access_key_ref_id != account.access_key_ref_id:
+        _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_access_key_ref_id)
+    if old_secret_access_key_ref_id != account.secret_access_key_ref_id:
+        _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_secret_access_key_ref_id)
+    if old_session_token_ref_id != account.session_token_ref_id:
+        _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_session_token_ref_id)
+    db.commit()
+
     return _aws_account_out(account)
 
 
@@ -814,8 +1055,18 @@ async def delete_aws_account(
     if db.query(ScanProfile).filter(ScanProfile.scan_type == "aws", ScanProfile.config_json.like(f'%"aws_account_id": {account_id}%')).first():
         raise HTTPException(status_code=409, detail="AWS account is in use by scan profiles")
 
+    old_access_key_ref_id = account.access_key_ref_id
+    old_secret_access_key_ref_id = account.secret_access_key_ref_id
+    old_session_token_ref_id = account.session_token_ref_id
+
     db.delete(account)
     db.commit()
+
+    _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_access_key_ref_id)
+    _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_secret_access_key_ref_id)
+    _cleanup_orphaned_internal_aws_inline_secret_ref(db, old_session_token_ref_id)
+    db.commit()
+
     return {"message": "AWS account deleted"}
 
 
@@ -942,6 +1193,7 @@ async def list_inventory(
     item_type: str | None = None,
     search: str | None = None,
     limit: int = Query(default=300, ge=1, le=5000),
+    include_history: bool = Query(default=False),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ):
@@ -954,7 +1206,24 @@ async def list_inventory(
         like = f"%{search}%"
         query = query.filter((InventoryItem.name.like(like)) | (InventoryItem.item_key.like(like)))
 
-    items = query.order_by(desc(InventoryItem.discovered_at)).limit(limit).all()
+    ordered_query = query.order_by(desc(InventoryItem.discovered_at), desc(InventoryItem.id))
+    if include_history:
+        items = ordered_query.limit(limit).all()
+        return [_inventory_out(item) for item in items]
+
+    # Default inventory behavior is a current-state view: one latest row per resource key.
+    latest_items: list[InventoryItem] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in ordered_query.all():
+        dedupe_key = (item.provider, item.item_key)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        latest_items.append(item)
+        if len(latest_items) >= limit:
+            break
+
+    items = latest_items
     return [_inventory_out(item) for item in items]
 
 

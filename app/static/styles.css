@@ -6,7 +6,7 @@
   --surface-border: rgba(31, 43, 34, 0.1);
   --accent: #195d45;
   --accent-2: #d76f2d;
-  --danger: #96202b;
+  --danger: #931a27;
   --shadow: 0 20px 45px rgba(25, 93, 69, 0.12);
 }
 
@@ -198,6 +198,10 @@ button:hover {
 
 .inline.four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.inline.five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .actions-row {

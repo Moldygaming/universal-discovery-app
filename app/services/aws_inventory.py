@@ -11,17 +11,37 @@ def _list_regions(session: boto3.Session) -> List[str]:
 
 
 def discover_aws_resources(
-    access_key_id: str,
-    secret_access_key: str,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
     session_token: Optional[str] = None,
     regions: Optional[List[str]] = None,
     max_resources_per_region: int = 2000,
+    role_arn: str | None = None,
+    external_id: str | None = None,
 ) -> Dict[str, object]:
-    session = boto3.Session(
+    base_session = boto3.Session(
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key,
         aws_session_token=session_token,
     )
+
+    session = base_session
+    if role_arn:
+        sts = base_session.client("sts")
+        assume_kwargs = {
+            "RoleArn": role_arn,
+            "RoleSessionName": "universal-discovery-app",
+        }
+        if external_id:
+            assume_kwargs["ExternalId"] = external_id
+
+        assumed = sts.assume_role(**assume_kwargs)
+        creds = assumed.get("Credentials") or {}
+        session = boto3.Session(
+            aws_access_key_id=creds.get("AccessKeyId"),
+            aws_secret_access_key=creds.get("SecretAccessKey"),
+            aws_session_token=creds.get("SessionToken"),
+        )
 
     selected_regions = regions or _list_regions(session)
     inventory_regions = []

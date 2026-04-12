@@ -116,6 +116,9 @@ async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str,
         secret_access_key = cfg.get("secret_access_key")
         session_token = cfg.get("session_token")
         regions = cfg.get("regions")
+        role_arn = cfg.get("role_arn")
+        external_id = cfg.get("external_id")
+        auth_mode = str(cfg.get("auth_mode") or "access_key")
 
         aws_account_id = cfg.get("aws_account_id")
         if aws_account_id is not None:
@@ -123,27 +126,41 @@ async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str,
             if not aws_account or not aws_account.is_active:
                 raise ValueError(f"AWS account config not found or inactive: {aws_account_id}")
 
-            access_key_id = str(resolve_secrets(_json_load(aws_account.access_key_ref.reference_json)))
-            secret_access_key = str(resolve_secrets(_json_load(aws_account.secret_access_key_ref.reference_json)))
+            auth_mode = str(aws_account.auth_mode or "access_key")
+            role_arn = aws_account.role_arn
+            external_id = aws_account.external_id
+
+            if auth_mode == "access_key":
+                access_key_id = str(resolve_secrets(_json_load(aws_account.access_key_ref.reference_json)))
+                secret_access_key = str(resolve_secrets(_json_load(aws_account.secret_access_key_ref.reference_json)))
+            else:
+                access_key_id = None
+                secret_access_key = None
 
             if aws_account.session_token_ref_id and aws_account.session_token_ref is not None:
                 session_token = str(resolve_secrets(_json_load(aws_account.session_token_ref.reference_json)))
 
             regions = _json_load(aws_account.regions_json) if aws_account.regions_json else None
 
-        if not access_key_id or not secret_access_key:
+        if auth_mode == "assume_role":
+            if not role_arn:
+                raise ValueError("AWS assume_role scan requires role_arn or aws_account_id configured for assume role")
+        elif not access_key_id or not secret_access_key:
             raise ValueError("AWS scan requires access_key_id and secret_access_key or aws_account_id")
 
         result = await asyncio.to_thread(
             discover_aws_resources,
-            str(access_key_id),
-            str(secret_access_key),
+            str(access_key_id) if access_key_id else None,
+            str(secret_access_key) if secret_access_key else None,
             str(session_token) if session_token else None,
             regions,
             int(cfg.get("max_resources_per_region", 2000)),
+            str(role_arn) if role_arn else None,
+            str(external_id) if external_id else None,
         )
         summary = {
             "scan_type": "aws",
+            "auth_mode": auth_mode,
             "regions_scanned": result.get("regions_scanned", 0),
             "warnings": len(result.get("warnings", [])),
         }
