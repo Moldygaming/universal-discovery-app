@@ -160,8 +160,86 @@
 
         <section class="grid tab-view hidden" id="view-service-models">
           <article class="card" data-reveal>
-            <h2>Service Model Overview</h2>
-            <button id="refreshModelsBtn">Refresh Model</button>
+            <h2>Service Model Catalogue</h2>
+            <div class="actions-inline">
+              <button id="refreshModelsBtn" type="button">Refresh Catalogue</button>
+              <button id="newServiceModelBtn" type="button" class="secondary">New Service</button>
+            </div>
+
+            <div class="split-panels">
+              <section>
+                <h3 class="small-head">Services</h3>
+                <div id="serviceModelListPanel" class="list-panel"></div>
+              </section>
+              <section>
+                <h3 class="small-head">Service Editor</h3>
+                <form id="serviceModelForm">
+                  <label>Service Name
+                    <input id="serviceModelName" name="name" required placeholder="e.g. IPAM" />
+                  </label>
+                  <label>Description
+                    <textarea id="serviceModelDescription" name="description" rows="3" placeholder="Business and technical purpose of this service"></textarea>
+                  </label>
+                  <label>Active
+                    <select id="serviceModelIsActive" name="is_active">
+                      <option value="true" selected>true</option>
+                      <option value="false">false</option>
+                    </select>
+                  </label>
+                  <div class="actions-inline">
+                    <button id="saveServiceModelBtn" type="submit">Save Service</button>
+                    <button id="deleteServiceModelBtn" type="button" class="secondary">Delete Service</button>
+                  </div>
+                </form>
+
+                <div class="provider-panel">
+                  <h4 class="small-head">Attach Inventory Resources</h4>
+                  <form id="serviceResourceSearchForm" class="inline two">
+                    <label>Search
+                      <input id="serviceResourceSearch" name="search" placeholder="name or resource key" />
+                    </label>
+                    <label>Provider
+                      <select id="serviceResourceProvider" name="provider">
+                        <option value="">All providers</option>
+                        <option value="azure">Azure</option>
+                        <option value="aws">AWS</option>
+                        <option value="gcp">GCP</option>
+                        <option value="onprem">On-Prem</option>
+                      </select>
+                    </label>
+                    <button type="submit" class="secondary">Find Resources</button>
+                  </form>
+                  <div id="serviceInventoryCandidatesPanel" class="list-panel"></div>
+                  <button id="attachSelectedResourcesBtn" type="button">Attach Selected Resources</button>
+                </div>
+
+                <div class="provider-panel">
+                  <h4 class="small-head">Dependencies</h4>
+                  <div class="inline two">
+                    <label>Depends On Service
+                      <select id="dependencyTargetServiceSelect"></select>
+                    </label>
+                    <label>Relation
+                      <input id="dependencyRelationInput" value="depends_on" />
+                    </label>
+                  </div>
+                  <button id="addDependencyBtn" type="button">Add Dependency</button>
+                </div>
+              </section>
+            </div>
+
+            <div class="split-panels">
+              <section>
+                <h3 class="small-head">Attached Resources</h3>
+                <div id="serviceResourcesPanel" class="list-panel"></div>
+              </section>
+              <section>
+                <h3 class="small-head">Service Dependencies</h3>
+                <div id="serviceDependenciesPanel" class="list-panel"></div>
+              </section>
+            </div>
+
+            <h3 class="small-head">Topology Overview (JSON)</h3>
             <pre id="modelsPanel">No service model loaded.</pre>
           </article>
         </section>

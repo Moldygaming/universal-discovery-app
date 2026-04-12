@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -134,6 +134,50 @@ class SsoConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     client_secret_ref: Mapped[SecretReference | None] = relationship("SecretReference", foreign_keys=[client_secret_ref_id])
+
+
+class ServiceModel(Base):
+    __tablename__ = "service_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ServiceModelResource(Base):
+    __tablename__ = "service_model_resources"
+    __table_args__ = (UniqueConstraint("service_id", "inventory_item_key", name="uq_service_resource_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("service_models.id"), nullable=False, index=True)
+    inventory_item_key: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+    provider: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    item_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    region: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service: Mapped[ServiceModel] = relationship("ServiceModel")
+
+
+class ServiceModelDependency(Base):
+    __tablename__ = "service_model_dependencies"
+    __table_args__ = (
+        UniqueConstraint("service_id", "depends_on_service_id", "relation", name="uq_service_dependency"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("service_models.id"), nullable=False, index=True)
+    depends_on_service_id: Mapped[int] = mapped_column(ForeignKey("service_models.id"), nullable=False, index=True)
+    relation: Mapped[str] = mapped_column(String(60), nullable=False, default="depends_on")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    service: Mapped[ServiceModel] = relationship("ServiceModel", foreign_keys=[service_id])
+    depends_on_service: Mapped[ServiceModel] = relationship("ServiceModel", foreign_keys=[depends_on_service_id])
 
 
 class InventoryItem(Base):

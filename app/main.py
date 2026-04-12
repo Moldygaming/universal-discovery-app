@@ -34,6 +34,13 @@ from app.api_models import (
     ScanProfileOut,
     ScanProfileUpdateRequest,
     ScanRunOut,
+    ServiceModelCreateRequest,
+    ServiceModelDependencyCreateRequest,
+    ServiceModelOut,
+    ServiceModelResourceAttachRequest,
+    ServiceModelResourceOut,
+    ServiceModelDependencyOut,
+    ServiceModelUpdateRequest,
     SsoConfigOut,
     SsoConfigUpdateRequest,
     SecretReferenceCreateRequest,
@@ -44,7 +51,7 @@ from app.api_models import (
 )
 from app.config import settings
 from app.database import Base, SessionLocal, apply_runtime_schema_patches, engine, get_db_session
-from app.db_models import AwsAccountConfig, AzureTenantConfig, GcpAccountConfig, InventoryItem, ScanProfile, ScanRun, SecretReference, SsoConfig, User
+from app.db_models import AwsAccountConfig, AzureTenantConfig, GcpAccountConfig, InventoryItem, ScanProfile, ScanRun, SecretReference, ServiceModel, ServiceModelDependency, ServiceModelResource, SsoConfig, User
 from app.discovery_runtime import execute_and_persist_scan, mask_sensitive_config
 from app.scan_profile_validation import ScanProfileValidationError, validate_scan_profile_config
 from app.scheduler_runtime import discovery_scheduler
@@ -120,6 +127,74 @@ def _inventory_out(item: InventoryItem) -> InventoryItemOut:
         parent_key=item.parent_key,
         attributes=_to_json(item.attributes_json),
         discovered_at=item.discovered_at,
+    )
+
+
+def _service_model_resource_out(resource: ServiceModelResource) -> ServiceModelResourceOut:
+    return ServiceModelResourceOut(
+        id=resource.id,
+        inventory_item_key=resource.inventory_item_key,
+        provider=resource.provider,
+        item_type=resource.item_type,
+        name=resource.name,
+        region=resource.region,
+        created_at=resource.created_at,
+    )
+
+
+def _service_model_dependency_out(
+    dependency: ServiceModelDependency,
+    depends_on_service_name: str,
+) -> ServiceModelDependencyOut:
+    return ServiceModelDependencyOut(
+        id=dependency.id,
+        depends_on_service_id=dependency.depends_on_service_id,
+        depends_on_service_name=depends_on_service_name,
+        relation=dependency.relation,
+        created_at=dependency.created_at,
+    )
+
+
+def _service_model_out(service: ServiceModel, db: Session) -> ServiceModelOut:
+    resources = (
+        db.query(ServiceModelResource)
+        .filter(ServiceModelResource.service_id == service.id)
+        .order_by(ServiceModelResource.name.asc(), ServiceModelResource.id.asc())
+        .all()
+    )
+    dependencies = (
+        db.query(ServiceModelDependency)
+        .filter(ServiceModelDependency.service_id == service.id)
+        .order_by(ServiceModelDependency.created_at.asc(), ServiceModelDependency.id.asc())
+        .all()
+    )
+    depends_on_ids = sorted({dependency.depends_on_service_id for dependency in dependencies})
+    depends_on_names = {
+        row.id: row.name
+        for row in db.query(ServiceModel.id, ServiceModel.name).filter(ServiceModel.id.in_(depends_on_ids)).all()
+    }
+
+    resource_items = [_service_model_resource_out(resource) for resource in resources]
+    dependency_items = [
+        _service_model_dependency_out(
+            dependency,
+            depends_on_service_name=depends_on_names.get(dependency.depends_on_service_id, f"service:{dependency.depends_on_service_id}"),
+        )
+        for dependency in dependencies
+    ]
+
+    return ServiceModelOut(
+        id=service.id,
+        name=service.name,
+        description=service.description,
+        is_active=service.is_active,
+        created_by_user_id=service.created_by_user_id,
+        created_at=service.created_at,
+        updated_at=service.updated_at,
+        resource_count=len(resource_items),
+        dependency_count=len(dependency_items),
+        resources=resource_items,
+        dependencies=dependency_items,
     )
 
 
@@ -1798,7 +1873,7 @@ async def list_inventory(
         query = query.filter(InventoryItem.item_type == item_type)
     if search:
         like = f"%{search}%"
-        query = query.filter((InventoryItem.name.like(like)) | (InventoryItem.item_key.like(like)))
+        query = query.filter((InventoryItem.name.ilike(like)) | (InventoryItem.item_key.ilike(like)))
 
     ordered_query = query.order_by(desc(InventoryItem.discovered_at), desc(InventoryItem.id))
     if include_history:
@@ -1821,6 +1896,243 @@ async def list_inventory(
     return [_inventory_out(item) for item in items]
 
 
+@app.get("/api/service-models/catalog")
+async def list_service_models(
+    include_inactive: bool = Query(default=True),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    query = db.query(ServiceModel)
+    if not include_inactive:
+        query = query.filter(ServiceModel.is_active == True)  # noqa: E712
+    services = query.order_by(ServiceModel.name.asc()).all()
+    return [_service_model_out(service, db) for service in services]
+
+
+@app.post("/api/service-models/catalog")
+async def create_service_model(
+    payload: ServiceModelCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    if db.query(ServiceModel).filter(ServiceModel.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Service model name already exists")
+
+    service = ServiceModel(
+        name=payload.name.strip(),
+        description=payload.description.strip() if payload.description else None,
+        is_active=payload.is_active,
+        created_by_user_id=current_user.id,
+        updated_at=datetime.utcnow(),
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    return _service_model_out(service, db)
+
+
+@app.put("/api/service-models/catalog/{service_id}")
+async def update_service_model(
+    service_id: int,
+    payload: ServiceModelUpdateRequest,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    if payload.name is not None:
+        updated_name = payload.name.strip()
+        existing = db.query(ServiceModel).filter(ServiceModel.name == updated_name, ServiceModel.id != service_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Service model name already exists")
+        service.name = updated_name
+
+    if "description" in payload.model_fields_set:
+        service.description = payload.description.strip() if payload.description else None
+
+    if payload.is_active is not None:
+        service.is_active = payload.is_active
+
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(service)
+    return _service_model_out(service, db)
+
+
+@app.delete("/api/service-models/catalog/{service_id}")
+async def delete_service_model(
+    service_id: int,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    db.query(ServiceModelDependency).filter(
+        (ServiceModelDependency.service_id == service_id) | (ServiceModelDependency.depends_on_service_id == service_id)
+    ).delete(synchronize_session=False)
+    db.query(ServiceModelResource).filter(ServiceModelResource.service_id == service_id).delete(synchronize_session=False)
+    db.delete(service)
+    db.commit()
+    return {"message": "Service model deleted"}
+
+
+@app.post("/api/service-models/catalog/{service_id}/resources")
+async def attach_resources_to_service(
+    service_id: int,
+    payload: ServiceModelResourceAttachRequest,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    requested_keys = []
+    for key in payload.inventory_item_keys:
+        normalized = str(key or "").strip()
+        if normalized:
+            requested_keys.append(normalized)
+    requested_keys = list(dict.fromkeys(requested_keys))
+    if not requested_keys:
+        raise HTTPException(status_code=400, detail="At least one inventory item key is required")
+
+    existing_keys = {
+        row.inventory_item_key
+        for row in db.query(ServiceModelResource.inventory_item_key).filter(ServiceModelResource.service_id == service_id).all()
+    }
+
+    attached_count = 0
+    missing_keys: list[str] = []
+    for inventory_item_key in requested_keys:
+        if inventory_item_key in existing_keys:
+            continue
+
+        inventory_item = (
+            db.query(InventoryItem)
+            .filter(InventoryItem.item_key == inventory_item_key)
+            .order_by(desc(InventoryItem.discovered_at), desc(InventoryItem.id))
+            .first()
+        )
+        if not inventory_item:
+            missing_keys.append(inventory_item_key)
+            continue
+
+        db.add(
+            ServiceModelResource(
+                service_id=service_id,
+                inventory_item_key=inventory_item.item_key,
+                provider=inventory_item.provider,
+                item_type=inventory_item.item_type,
+                name=inventory_item.name,
+                region=inventory_item.region,
+            )
+        )
+        existing_keys.add(inventory_item_key)
+        attached_count += 1
+
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(service)
+
+    return {
+        "attached_count": attached_count,
+        "missing_keys": missing_keys,
+        "service": _service_model_out(service, db),
+    }
+
+
+@app.delete("/api/service-models/catalog/{service_id}/resources/{resource_id}")
+async def detach_service_resource(
+    service_id: int,
+    resource_id: int,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    resource = db.query(ServiceModelResource).filter(
+        ServiceModelResource.id == resource_id,
+        ServiceModelResource.service_id == service_id,
+    ).first()
+    if not resource:
+        raise HTTPException(status_code=404, detail="Service resource attachment not found")
+
+    db.delete(resource)
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Service resource detached"}
+
+
+@app.post("/api/service-models/catalog/{service_id}/dependencies")
+async def add_service_dependency(
+    service_id: int,
+    payload: ServiceModelDependencyCreateRequest,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    if payload.depends_on_service_id == service_id:
+        raise HTTPException(status_code=400, detail="A service cannot depend on itself")
+
+    depends_on = db.query(ServiceModel).filter(ServiceModel.id == payload.depends_on_service_id).first()
+    if not depends_on:
+        raise HTTPException(status_code=404, detail="Dependency target service not found")
+
+    relation = payload.relation.strip().lower().replace(" ", "_")
+    existing_dependency = db.query(ServiceModelDependency).filter(
+        ServiceModelDependency.service_id == service_id,
+        ServiceModelDependency.depends_on_service_id == payload.depends_on_service_id,
+        ServiceModelDependency.relation == relation,
+    ).first()
+    if existing_dependency:
+        return _service_model_out(service, db)
+
+    db.add(
+        ServiceModelDependency(
+            service_id=service_id,
+            depends_on_service_id=payload.depends_on_service_id,
+            relation=relation,
+        )
+    )
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(service)
+    return _service_model_out(service, db)
+
+
+@app.delete("/api/service-models/catalog/{service_id}/dependencies/{dependency_id}")
+async def remove_service_dependency(
+    service_id: int,
+    dependency_id: int,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+
+    dependency = db.query(ServiceModelDependency).filter(
+        ServiceModelDependency.id == dependency_id,
+        ServiceModelDependency.service_id == service_id,
+    ).first()
+    if not dependency:
+        raise HTTPException(status_code=404, detail="Service dependency not found")
+
+    db.delete(dependency)
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Service dependency removed"}
+
+
 @app.get("/api/service-models/overview")
 async def service_model_overview(
     max_items: int = Query(default=2000, ge=100, le=10000),
@@ -1829,8 +2141,16 @@ async def service_model_overview(
 ):
     rows = db.query(InventoryItem).order_by(desc(InventoryItem.discovered_at)).limit(max_items).all()
 
-    nodes: dict[str, dict] = {}
-    edges = []
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, str]] = []
+    edge_keys: set[tuple[str, str, str]] = set()
+
+    def add_edge(from_node: str, to_node: str, relation: str) -> None:
+        edge_key = (from_node, to_node, relation)
+        if edge_key in edge_keys:
+            return
+        edge_keys.add(edge_key)
+        edges.append({"from": from_node, "to": to_node, "relation": relation})
 
     for row in rows:
         if row.item_key not in nodes:
@@ -1843,7 +2163,7 @@ async def service_model_overview(
             }
 
         if row.parent_key:
-            edges.append({"from": row.parent_key, "to": row.item_key, "relation": "contains"})
+            add_edge(row.parent_key, row.item_key, "contains")
             if row.parent_key not in nodes:
                 nodes[row.parent_key] = {
                     "id": row.parent_key,
@@ -1852,6 +2172,41 @@ async def service_model_overview(
                     "provider": row.provider,
                     "region": row.region,
                 }
+
+    services = db.query(ServiceModel).order_by(ServiceModel.name.asc()).all()
+    for service in services:
+        service_node_id = f"service:{service.id}"
+        nodes[service_node_id] = {
+            "id": service_node_id,
+            "label": service.name,
+            "type": "service.catalog",
+            "provider": "catalog",
+            "region": None,
+            "is_active": service.is_active,
+        }
+
+    resources = db.query(ServiceModelResource).all()
+    for resource in resources:
+        service_node_id = f"service:{resource.service_id}"
+        if service_node_id not in nodes:
+            continue
+
+        if resource.inventory_item_key not in nodes:
+            nodes[resource.inventory_item_key] = {
+                "id": resource.inventory_item_key,
+                "label": resource.name,
+                "type": resource.item_type or "inventory.resource",
+                "provider": resource.provider or "unknown",
+                "region": resource.region,
+            }
+        add_edge(service_node_id, resource.inventory_item_key, "uses")
+
+    dependencies = db.query(ServiceModelDependency).all()
+    for dependency in dependencies:
+        from_node = f"service:{dependency.service_id}"
+        to_node = f"service:{dependency.depends_on_service_id}"
+        if from_node in nodes and to_node in nodes:
+            add_edge(from_node, to_node, dependency.relation or "depends_on")
 
     return {
         "nodes": list(nodes.values()),

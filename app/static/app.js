@@ -34,12 +34,30 @@ const profilesPanel = document.getElementById("profilesPanel");
 
 const refreshRunsBtn = document.getElementById("refreshRunsBtn");
 const refreshModelsBtn = document.getElementById("refreshModelsBtn");
+const newServiceModelBtn = document.getElementById("newServiceModelBtn");
 const refreshUsersBtn = document.getElementById("refreshUsersBtn");
 const refreshProfilesBtn = document.getElementById("refreshProfilesBtn");
 
 const inventoryFilterForm = document.getElementById("inventoryFilterForm");
 const profileForm = document.getElementById("profileForm");
 const userForm = document.getElementById("userForm");
+const serviceModelForm = document.getElementById("serviceModelForm");
+const serviceModelNameInput = document.getElementById("serviceModelName");
+const serviceModelDescriptionInput = document.getElementById("serviceModelDescription");
+const serviceModelIsActiveSelect = document.getElementById("serviceModelIsActive");
+const saveServiceModelBtn = document.getElementById("saveServiceModelBtn");
+const deleteServiceModelBtn = document.getElementById("deleteServiceModelBtn");
+const serviceModelListPanel = document.getElementById("serviceModelListPanel");
+const serviceResourceSearchForm = document.getElementById("serviceResourceSearchForm");
+const serviceResourceSearchInput = document.getElementById("serviceResourceSearch");
+const serviceResourceProviderSelect = document.getElementById("serviceResourceProvider");
+const serviceInventoryCandidatesPanel = document.getElementById("serviceInventoryCandidatesPanel");
+const attachSelectedResourcesBtn = document.getElementById("attachSelectedResourcesBtn");
+const serviceResourcesPanel = document.getElementById("serviceResourcesPanel");
+const serviceDependenciesPanel = document.getElementById("serviceDependenciesPanel");
+const dependencyTargetServiceSelect = document.getElementById("dependencyTargetServiceSelect");
+const dependencyRelationInput = document.getElementById("dependencyRelationInput");
+const addDependencyBtn = document.getElementById("addDependencyBtn");
 const saveProfileBtn = document.getElementById("saveProfileBtn");
 const cancelEditProfileBtn = document.getElementById("cancelEditProfileBtn");
 const profileEditBanner = document.getElementById("profileEditBanner");
@@ -167,6 +185,10 @@ let inventoryVisibleItemTypes = {};
 let inventoryVisibleAttributes = {};
 let activeAdminPane = "cloud-accounts";
 let scanProfiles = [];
+let serviceModels = [];
+let selectedServiceModelId = null;
+let serviceInventoryCandidates = [];
+let serviceSearchDebounceHandle = null;
 
 function defaultProfileConfig(scanType) {
   if (scanType === "snmp") {
@@ -604,6 +626,10 @@ function activateTab(tabName) {
 
   if (tabName === "scan-history") {
     refreshRuns().catch((error) => logActivity(String(error)));
+  }
+
+  if (tabName === "service-models") {
+    refreshModels().catch((error) => logActivity(String(error)));
   }
 }
 
@@ -2270,9 +2296,307 @@ async function refreshInventory(provider, search) {
   );
 }
 
+function selectedServiceModel() {
+  return serviceModels.find((service) => Number(service.id) === Number(selectedServiceModelId)) || null;
+}
+
+function setServiceModelFormState(service = null) {
+  if (!serviceModelForm || !serviceModelNameInput || !serviceModelDescriptionInput || !serviceModelIsActiveSelect) {
+    return;
+  }
+
+  if (!service) {
+    serviceModelForm.reset();
+    serviceModelNameInput.value = "";
+    serviceModelDescriptionInput.value = "";
+    serviceModelIsActiveSelect.value = "true";
+    if (saveServiceModelBtn) {
+      saveServiceModelBtn.textContent = "Save Service";
+    }
+    if (deleteServiceModelBtn) {
+      deleteServiceModelBtn.disabled = true;
+    }
+    return;
+  }
+
+  serviceModelNameInput.value = String(service.name || "");
+  serviceModelDescriptionInput.value = String(service.description || "");
+  serviceModelIsActiveSelect.value = service.is_active ? "true" : "false";
+  if (saveServiceModelBtn) {
+    saveServiceModelBtn.textContent = "Update Service";
+  }
+  if (deleteServiceModelBtn) {
+    deleteServiceModelBtn.disabled = false;
+  }
+}
+
+function renderServiceModelList() {
+  if (!serviceModelListPanel) {
+    return;
+  }
+
+  if (!serviceModels.length) {
+    serviceModelListPanel.innerHTML = '<div class="list-item">No services in catalogue yet.</div>';
+    return;
+  }
+
+  serviceModelListPanel.innerHTML = serviceModels
+    .map((service) => {
+      const isSelected = Number(service.id) === Number(selectedServiceModelId);
+      return `
+      <div class="list-item">
+        <h4>${escapeHtml(service.name)}</h4>
+        <div>Active: ${String(Boolean(service.is_active))}</div>
+        <div>Resources: ${Number(service.resource_count || 0)}</div>
+        <div>Dependencies: ${Number(service.dependency_count || 0)}</div>
+        <div class="mini-actions">
+          <button data-service-model-select-id="${service.id}" ${isSelected ? "disabled" : ""}>${isSelected ? "Selected" : "Open"}</button>
+        </div>
+      </div>
+    `;
+    })
+    .join("");
+
+  serviceModelListPanel.querySelectorAll("button[data-service-model-select-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      selectedServiceModelId = Number(button.dataset.serviceModelSelectId);
+      renderServiceModelList();
+      syncServiceModelPanels();
+      await refreshServiceInventoryCandidates();
+    });
+  });
+}
+
+function renderServiceDependencyTargetOptions() {
+  if (!dependencyTargetServiceSelect) {
+    return;
+  }
+
+  const selectedId = Number(selectedServiceModelId || 0);
+  const options = ['<option value="">-- select service --</option>'];
+  serviceModels.forEach((service) => {
+    if (Number(service.id) === selectedId) {
+      return;
+    }
+    options.push(`<option value="${service.id}">${escapeHtml(service.name)}</option>`);
+  });
+  dependencyTargetServiceSelect.innerHTML = options.join("");
+}
+
+function renderServiceResourcesPanel(service) {
+  if (!serviceResourcesPanel) {
+    return;
+  }
+
+  const resources = Array.isArray(service?.resources) ? service.resources : [];
+  if (!resources.length) {
+    serviceResourcesPanel.innerHTML = '<div class="list-item">No resources attached.</div>';
+    return;
+  }
+
+  serviceResourcesPanel.innerHTML = resources
+    .map((resource) => `
+      <div class="list-item">
+        <h4>${escapeHtml(resource.name || resource.inventory_item_key)}</h4>
+        <div>Type: ${escapeHtml(resource.item_type || "unknown")}</div>
+        <div>Provider: ${escapeHtml(resource.provider || "unknown")}</div>
+        <div>Key: ${escapeHtml(resource.inventory_item_key)}</div>
+        <div class="mini-actions">
+          <button data-service-resource-remove-id="${resource.id}" class="secondary">Detach</button>
+        </div>
+      </div>
+    `)
+    .join("");
+
+  serviceResourcesPanel.querySelectorAll("button[data-service-resource-remove-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const resourceId = Number(button.dataset.serviceResourceRemoveId);
+      if (!Number.isInteger(resourceId) || !selectedServiceModelId) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/service-models/catalog/${selectedServiceModelId}/resources/${resourceId}`, {
+          method: "DELETE",
+        });
+        await refreshModels();
+        await refreshServiceInventoryCandidates();
+        logActivity("Service resource detached");
+      } catch (error) {
+        logActivity(`Failed to detach service resource: ${String(error)}`);
+      }
+    });
+  });
+}
+
+function renderServiceDependenciesPanel(service) {
+  if (!serviceDependenciesPanel) {
+    return;
+  }
+
+  const dependencies = Array.isArray(service?.dependencies) ? service.dependencies : [];
+  if (!dependencies.length) {
+    serviceDependenciesPanel.innerHTML = '<div class="list-item">No dependencies defined.</div>';
+    return;
+  }
+
+  serviceDependenciesPanel.innerHTML = dependencies
+    .map((dependency) => `
+      <div class="list-item">
+        <h4>${escapeHtml(dependency.depends_on_service_name)}</h4>
+        <div>Relation: ${escapeHtml(dependency.relation)}</div>
+        <div class="mini-actions">
+          <button data-service-dependency-remove-id="${dependency.id}" class="secondary">Remove</button>
+        </div>
+      </div>
+    `)
+    .join("");
+
+  serviceDependenciesPanel.querySelectorAll("button[data-service-dependency-remove-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const dependencyId = Number(button.dataset.serviceDependencyRemoveId);
+      if (!Number.isInteger(dependencyId) || !selectedServiceModelId) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/service-models/catalog/${selectedServiceModelId}/dependencies/${dependencyId}`, {
+          method: "DELETE",
+        });
+        await refreshModels();
+        logActivity("Service dependency removed");
+      } catch (error) {
+        logActivity(`Failed to remove dependency: ${String(error)}`);
+      }
+    });
+  });
+}
+
+function renderServiceInventoryCandidates() {
+  if (!serviceInventoryCandidatesPanel) {
+    return;
+  }
+
+  const hasSearchTerm = Boolean(String(serviceResourceSearchInput?.value || "").trim());
+  if (!hasSearchTerm) {
+    serviceInventoryCandidatesPanel.innerHTML = '<div class="list-item">Type a search term to find inventory resources.</div>';
+    updateAttachResourceButtonState();
+    return;
+  }
+
+  if (!serviceInventoryCandidates.length) {
+    serviceInventoryCandidatesPanel.innerHTML = '<div class="list-item">No inventory matches this filter.</div>';
+    updateAttachResourceButtonState();
+    return;
+  }
+
+  const selectedService = selectedServiceModel();
+  const attachedKeys = new Set((selectedService?.resources || []).map((resource) => String(resource.inventory_item_key)));
+
+  serviceInventoryCandidatesPanel.innerHTML = serviceInventoryCandidates
+    .map((item) => {
+      const itemKey = String(item.item_key || "");
+      const isAttached = attachedKeys.has(itemKey);
+      const isDisabled = isAttached;
+      return `
+      <div class="list-item">
+        <h4>${escapeHtml(item.name || itemKey)}</h4>
+        <div>Type: ${escapeHtml(item.item_type || "unknown")}</div>
+        <label>
+          <input type="checkbox" data-service-candidate-key="${encodeURIComponent(itemKey)}" ${isDisabled ? "disabled" : ""} />
+          ${isAttached ? "Already attached" : "Select for attach"}
+        </label>
+      </div>
+    `;
+    })
+    .join("");
+
+  updateAttachResourceButtonState();
+}
+
+function updateAttachResourceButtonState() {
+  if (!attachSelectedResourcesBtn) {
+    return;
+  }
+
+  const selectedService = selectedServiceModel();
+  const hasSearchTerm = Boolean(String(serviceResourceSearchInput?.value || "").trim());
+  const selectedCount = Array.from(
+    serviceInventoryCandidatesPanel?.querySelectorAll("input[data-service-candidate-key]:checked") || []
+  ).length;
+
+  if (!hasSearchTerm) {
+    attachSelectedResourcesBtn.disabled = true;
+    attachSelectedResourcesBtn.textContent = "Search to Find Resources";
+    return;
+  }
+
+  if (!selectedService) {
+    attachSelectedResourcesBtn.disabled = true;
+    attachSelectedResourcesBtn.textContent = selectedCount > 0
+      ? `Select a Service to Attach (${selectedCount} selected)`
+      : "Select a Service to Attach";
+    return;
+  }
+
+  attachSelectedResourcesBtn.disabled = selectedCount === 0;
+  attachSelectedResourcesBtn.textContent = selectedCount > 0
+    ? `Attach Selected Resources (${selectedCount})`
+    : "Attach Selected Resources";
+}
+
+function syncServiceModelPanels() {
+  const selected = selectedServiceModel();
+  setServiceModelFormState(selected);
+  renderServiceDependencyTargetOptions();
+  renderServiceResourcesPanel(selected);
+  renderServiceDependenciesPanel(selected);
+  renderServiceInventoryCandidates();
+  updateAttachResourceButtonState();
+}
+
+async function refreshServiceInventoryCandidates() {
+  const search = String(serviceResourceSearchInput?.value || "").trim();
+  if (!search) {
+    serviceInventoryCandidates = [];
+    renderServiceInventoryCandidates();
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.set("limit", "300");
+  params.set("include_history", "false");
+  const provider = String(serviceResourceProviderSelect?.value || "").trim();
+  params.set("search", search);
+  if (provider) {
+    params.set("provider", provider);
+  }
+
+  const items = await apiFetch(`/api/inventory/items?${params.toString()}`);
+  serviceInventoryCandidates = Array.isArray(items) ? items : [];
+  renderServiceInventoryCandidates();
+}
+
 async function refreshModels() {
-  const model = await apiFetch("/api/service-models/overview");
+  const [model, catalog] = await Promise.all([
+    apiFetch("/api/service-models/overview"),
+    apiFetch("/api/service-models/catalog"),
+  ]);
+
   modelsPanel.textContent = JSON.stringify(model, null, 2);
+  serviceModels = Array.isArray(catalog) ? catalog : [];
+
+  if (selectedServiceModelId && !serviceModels.some((service) => Number(service.id) === Number(selectedServiceModelId))) {
+    selectedServiceModelId = null;
+  }
+
+  if (!selectedServiceModelId && serviceModels.length) {
+    selectedServiceModelId = serviceModels[0].id;
+  }
+
+  renderServiceModelList();
+  syncServiceModelPanels();
+  await refreshServiceInventoryCandidates();
 }
 
 async function refreshUsers() {
@@ -2694,11 +3018,188 @@ document.addEventListener("click", (event) => {
 refreshModelsBtn.addEventListener("click", async () => {
   try {
     await refreshModels();
-    logActivity("Service model refreshed");
+    logActivity("Service model catalogue refreshed");
   } catch (error) {
     logActivity(String(error));
   }
 });
+
+if (newServiceModelBtn) {
+  newServiceModelBtn.addEventListener("click", () => {
+    selectedServiceModelId = null;
+    renderServiceModelList();
+    syncServiceModelPanels();
+    logActivity("Creating a new service model");
+  });
+}
+
+if (serviceModelForm) {
+  serviceModelForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(serviceModelForm);
+    const payload = {
+      name: String(fd.get("name") || "").trim(),
+      description: String(fd.get("description") || "").trim() || null,
+      is_active: String(fd.get("is_active") || "true") === "true",
+    };
+
+    if (!payload.name) {
+      logActivity("Service name is required");
+      return;
+    }
+
+    try {
+      const isEditing = Number.isInteger(selectedServiceModelId);
+      const path = isEditing ? `/api/service-models/catalog/${selectedServiceModelId}` : "/api/service-models/catalog";
+      const method = isEditing ? "PUT" : "POST";
+      const saved = await apiFetch(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+
+      selectedServiceModelId = saved?.id || selectedServiceModelId;
+      await refreshModels();
+      logActivity(`${isEditing ? "Service updated" : "Service created"}: ${payload.name}`);
+    } catch (error) {
+      logActivity(`Failed to save service model: ${String(error)}`);
+    }
+  });
+}
+
+if (deleteServiceModelBtn) {
+  deleteServiceModelBtn.addEventListener("click", async () => {
+    const service = selectedServiceModel();
+    if (!service) {
+      logActivity("Select a service before deleting");
+      return;
+    }
+
+    if (!window.confirm(`Delete service '${service.name}'?`)) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/service-models/catalog/${service.id}`, {
+        method: "DELETE",
+      });
+      selectedServiceModelId = null;
+      await refreshModels();
+      logActivity(`Service deleted: ${service.name}`);
+    } catch (error) {
+      logActivity(`Failed to delete service model: ${String(error)}`);
+    }
+  });
+}
+
+if (serviceResourceSearchForm) {
+  serviceResourceSearchForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await refreshServiceInventoryCandidates();
+      logActivity("Service inventory candidates refreshed");
+    } catch (error) {
+      logActivity(`Failed to refresh service inventory candidates: ${String(error)}`);
+    }
+  });
+}
+
+if (serviceResourceSearchInput) {
+  serviceResourceSearchInput.addEventListener("input", () => {
+    if (serviceSearchDebounceHandle) {
+      clearTimeout(serviceSearchDebounceHandle);
+    }
+    serviceSearchDebounceHandle = setTimeout(() => {
+      refreshServiceInventoryCandidates().catch((error) => logActivity(String(error)));
+    }, 220);
+  });
+}
+
+if (serviceResourceProviderSelect) {
+  serviceResourceProviderSelect.addEventListener("change", () => {
+    refreshServiceInventoryCandidates().catch((error) => logActivity(String(error)));
+  });
+}
+
+if (serviceInventoryCandidatesPanel) {
+  serviceInventoryCandidatesPanel.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target && target.matches("input[data-service-candidate-key]")) {
+      updateAttachResourceButtonState();
+    }
+  });
+}
+
+if (attachSelectedResourcesBtn) {
+  attachSelectedResourcesBtn.addEventListener("click", async () => {
+    const service = selectedServiceModel();
+    if (!service) {
+      logActivity("Select a service before attaching resources");
+      return;
+    }
+
+    const selectedKeys = Array.from(
+      serviceInventoryCandidatesPanel?.querySelectorAll("input[data-service-candidate-key]:checked") || []
+    )
+      .map((checkbox) => decodeURIComponent(String(checkbox.dataset.serviceCandidateKey || "")))
+      .filter(Boolean);
+
+    if (!selectedKeys.length) {
+      logActivity("Select at least one inventory resource to attach");
+      updateAttachResourceButtonState();
+      return;
+    }
+
+    try {
+      const result = await apiFetch(`/api/service-models/catalog/${service.id}/resources`, {
+        method: "POST",
+        body: JSON.stringify({ inventory_item_keys: selectedKeys }),
+      });
+      await refreshModels();
+      await refreshServiceInventoryCandidates();
+      const missing = Array.isArray(result?.missing_keys) ? result.missing_keys.length : 0;
+      logActivity(`Attached ${Number(result?.attached_count || 0)} resources${missing ? ` (${missing} missing)` : ""}`);
+      updateAttachResourceButtonState();
+    } catch (error) {
+      logActivity(`Failed to attach resources: ${String(error)}`);
+      updateAttachResourceButtonState();
+    }
+  });
+}
+
+if (addDependencyBtn) {
+  addDependencyBtn.addEventListener("click", async () => {
+    const service = selectedServiceModel();
+    if (!service) {
+      logActivity("Select a service before adding dependencies");
+      return;
+    }
+
+    const targetServiceId = Number(dependencyTargetServiceSelect?.value || "");
+    if (!Number.isInteger(targetServiceId) || targetServiceId <= 0) {
+      logActivity("Select a dependency target service");
+      return;
+    }
+
+    const relation = String(dependencyRelationInput?.value || "depends_on").trim() || "depends_on";
+
+    try {
+      await apiFetch(`/api/service-models/catalog/${service.id}/dependencies`, {
+        method: "POST",
+        body: JSON.stringify({
+          depends_on_service_id: targetServiceId,
+          relation,
+        }),
+      });
+      await refreshModels();
+      if (dependencyTargetServiceSelect) {
+        dependencyTargetServiceSelect.value = "";
+      }
+      logActivity("Service dependency added");
+    } catch (error) {
+      logActivity(`Failed to add dependency: ${String(error)}`);
+    }
+  });
+}
 
 if (changePasswordForm) {
   changePasswordForm.addEventListener("submit", async (event) => {

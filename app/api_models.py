@@ -246,3 +246,56 @@ class SsoConfigOut(BaseModel):
     admin_group_ids: list[str]
     user_group_ids: list[str]
     admin_emails: list[str]
+
+
+class ServiceModelCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    is_active: bool = True
+
+
+class ServiceModelUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+
+
+class ServiceModelResourceAttachRequest(BaseModel):
+    inventory_item_keys: list[str] = Field(..., min_length=1, max_length=500)
+
+
+class ServiceModelDependencyCreateRequest(BaseModel):
+    depends_on_service_id: int = Field(..., ge=1)
+    relation: str = Field(default="depends_on", min_length=2, max_length=60)
+
+
+class ServiceModelResourceOut(BaseModel):
+    id: int
+    inventory_item_key: str
+    provider: str | None
+    item_type: str | None
+    name: str
+    region: str | None
+    created_at: datetime
+
+
+class ServiceModelDependencyOut(BaseModel):
+    id: int
+    depends_on_service_id: int
+    depends_on_service_name: str
+    relation: str
+    created_at: datetime
+
+
+class ServiceModelOut(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    is_active: bool
+    created_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+    resource_count: int
+    dependency_count: int
+    resources: list[ServiceModelResourceOut]
+    dependencies: list[ServiceModelDependencyOut]
