@@ -66,6 +66,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 
 - http://localhost:8080
 - User guide: http://localhost:8080/guide
+- API documentation: see `API_DOCUMENTATION.md`
 
 ## First-Time Setup
 

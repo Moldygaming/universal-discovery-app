@@ -1909,6 +1909,18 @@ async def list_service_models(
     return [_service_model_out(service, db) for service in services]
 
 
+@app.get("/api/service-models/catalog/{service_id}")
+async def get_service_model(
+    service_id: int,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    service = db.query(ServiceModel).filter(ServiceModel.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service model not found")
+    return _service_model_out(service, db)
+
+
 @app.post("/api/service-models/catalog")
 async def create_service_model(
     payload: ServiceModelCreateRequest,

@@ -60,8 +60,20 @@
       <div class="card">
         <h2>3. Service Models View</h2>
         <p>
-          Open <strong>Service Models</strong> to view a relationship overview generated from discovered inventory.
-          Parent-child links are inferred from metadata such as resource groups and VPC context.
+          Open <strong>Service Models</strong> to build and manage a service catalogue from discovered inventory.
+          You can create services (for example <code>IPAM</code>), attach discovered resources, and model
+          dependencies between services.
+        </p>
+        <p>Typical workflow:</p>
+        <ul>
+          <li>Create or select a service from the left service list.</li>
+          <li>Search inventory resources in <strong>Attach Inventory Resources</strong> (results only show after search input).</li>
+          <li>Select one or more resources and attach them to the selected service.</li>
+          <li>Add service-to-service dependencies such as <code>IPAM depends_on DNS</code>.</li>
+          <li>Review attached resources, dependencies, and topology overview.</li>
+        </ul>
+        <p>
+          Resource search cards are intentionally compact and show only resource name and type.
         </p>
       </div>
 
@@ -73,22 +85,41 @@
           <li>Edit existing scan profiles directly from the profile list.</li>
           <li>Run scan profiles on demand.</li>
           <li>Create local and Entra-linked users.</li>
+          <li>Enable/disable users, change roles, and delete users with active-admin guardrails.</li>
+          <li>Configure Entra SSO in the <strong>SSO Integration</strong> pane.</li>
           <li>Configure multiple Azure tenant accounts.</li>
+          <li>Configure AWS and GCP account profiles.</li>
           <li>Create reusable secret references and assign them from dropdowns.</li>
         </ul>
       </div>
 
       <div class="card">
-        <h2>5. Azure Tenant Configuration</h2>
+        <h2>5. SSO Integration (Microsoft Entra ID)</h2>
+        <p>
+          In Admin Console, open <strong>SSO Integration</strong> to configure tenant ID, client ID,
+          client secret source, role claim mapping, default role, and admin fallback emails.
+        </p>
+        <p>
+          Group-based role mapping is supported through claim keys (default <code>groups</code>).
+          You can map admin and user group IDs directly in the UI.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>6. Cloud Account Configuration</h2>
         <p>
           In Admin Console, open <strong>Cloud Accounts</strong> and click <strong>Configure Azure Tenant</strong>.
           The window prompts for tenant name, tenant ID, client ID, and a <strong>Client Secret Reference</strong>
           selected from a dropdown.
         </p>
+        <p>
+          Equivalent guided forms are available for AWS and GCP account setup, including direct encrypted secret entry
+          where needed.
+        </p>
       </div>
 
       <div class="card">
-        <h2>6. Scan Configuration JSON Examples</h2>
+        <h2>7. Scan Configuration JSON Examples</h2>
         <p>ICMP profile config:</p>
         <p><code>{"target":"10.0.0.0/24","timeout_seconds":1,"concurrency":100,"max_hosts":1024}</code></p>
         <p>SNMP profile config:</p>
@@ -97,10 +128,12 @@
         <p><code>{"tenant_id":"...","client_id":"...","client_secret":{"$secret":{"provider":"azure_key_vault","vault_url":"https://my-vault.vault.azure.net/","name":"discovery-client-secret"}},"subscription_ids":["sub-id"]}</code></p>
         <p>AWS profile config:</p>
         <p><code>{"access_key_id":"...","secret_access_key":{"$secret":{"provider":"aws_secrets_manager","region":"us-east-1","secret_id":"discovery/aws","json_key":"secret_access_key"}},"regions":["us-east-1"]}</code></p>
+        <p>GCP profile config:</p>
+        <p><code>{"gcp_account_id":1,"max_resources_per_project":2000}</code></p>
       </div>
 
       <div class="card">
-        <h2>7. Secret Provider Reference Formats</h2>
+        <h2>8. Secret Provider Reference Formats</h2>
         <p>Environment variable provider:</p>
         <p><code>{"$secret":{"provider":"env","key":"MY_SECRET"}}</code></p>
         <p>Azure Key Vault provider:</p>
@@ -114,7 +147,15 @@
       </div>
 
       <div class="card">
-        <h2>8. Security Notes</h2>
+        <h2>9. API Reference</h2>
+        <p>
+          A complete endpoint reference is available in the repository root at
+          <code>API_DOCUMENTATION.md</code>.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>10. Security Notes</h2>
         <p>
           Keep production credentials in a secure secret store and avoid embedding long-lived secrets directly in
           profile JSON. Configure HTTPS and rotate app credentials regularly.
