@@ -287,6 +287,14 @@ class ServiceModelDependencyOut(BaseModel):
     created_at: datetime
 
 
+class ServiceModelDependantOut(BaseModel):
+    id: int
+    service_id: int
+    service_name: str
+    relation: str
+    created_at: datetime
+
+
 class ServiceModelOut(BaseModel):
     id: int
     name: str
@@ -297,5 +305,7 @@ class ServiceModelOut(BaseModel):
     updated_at: datetime
     resource_count: int
     dependency_count: int
+    dependant_count: int
     resources: list[ServiceModelResourceOut]
     dependencies: list[ServiceModelDependencyOut]
+    dependants: list[ServiceModelDependantOut]

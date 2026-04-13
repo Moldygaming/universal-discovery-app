@@ -36,6 +36,7 @@ from app.api_models import (
     ScanRunOut,
     ServiceModelCreateRequest,
     ServiceModelDependencyCreateRequest,
+    ServiceModelDependantOut,
     ServiceModelOut,
     ServiceModelResourceAttachRequest,
     ServiceModelResourceOut,
@@ -155,6 +156,19 @@ def _service_model_dependency_out(
     )
 
 
+def _service_model_dependant_out(
+    dependency: ServiceModelDependency,
+    service_name: str,
+) -> ServiceModelDependantOut:
+    return ServiceModelDependantOut(
+        id=dependency.id,
+        service_id=dependency.service_id,
+        service_name=service_name,
+        relation=dependency.relation,
+        created_at=dependency.created_at,
+    )
+
+
 def _service_model_out(service: ServiceModel, db: Session) -> ServiceModelOut:
     resources = (
         db.query(ServiceModelResource)
@@ -168,10 +182,21 @@ def _service_model_out(service: ServiceModel, db: Session) -> ServiceModelOut:
         .order_by(ServiceModelDependency.created_at.asc(), ServiceModelDependency.id.asc())
         .all()
     )
+    dependants = (
+        db.query(ServiceModelDependency)
+        .filter(ServiceModelDependency.depends_on_service_id == service.id)
+        .order_by(ServiceModelDependency.created_at.asc(), ServiceModelDependency.id.asc())
+        .all()
+    )
     depends_on_ids = sorted({dependency.depends_on_service_id for dependency in dependencies})
+    dependant_service_ids = sorted({dependency.service_id for dependency in dependants})
     depends_on_names = {
         row.id: row.name
         for row in db.query(ServiceModel.id, ServiceModel.name).filter(ServiceModel.id.in_(depends_on_ids)).all()
+    }
+    dependant_service_names = {
+        row.id: row.name
+        for row in db.query(ServiceModel.id, ServiceModel.name).filter(ServiceModel.id.in_(dependant_service_ids)).all()
     }
 
     resource_items = [_service_model_resource_out(resource) for resource in resources]
@@ -181,6 +206,13 @@ def _service_model_out(service: ServiceModel, db: Session) -> ServiceModelOut:
             depends_on_service_name=depends_on_names.get(dependency.depends_on_service_id, f"service:{dependency.depends_on_service_id}"),
         )
         for dependency in dependencies
+    ]
+    dependant_items = [
+        _service_model_dependant_out(
+            dependency,
+            service_name=dependant_service_names.get(dependency.service_id, f"service:{dependency.service_id}"),
+        )
+        for dependency in dependants
     ]
 
     return ServiceModelOut(
@@ -193,8 +225,10 @@ def _service_model_out(service: ServiceModel, db: Session) -> ServiceModelOut:
         updated_at=service.updated_at,
         resource_count=len(resource_items),
         dependency_count=len(dependency_items),
+        dependant_count=len(dependant_items),
         resources=resource_items,
         dependencies=dependency_items,
+        dependants=dependant_items,
     )
 
 

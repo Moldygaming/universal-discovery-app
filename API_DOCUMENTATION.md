@@ -269,11 +269,20 @@ All service-model endpoints currently require a valid bearer token (admin not re
   - `include_inactive` (default `true`)
 - Response: `ServiceModelOut[]`
 
+`ServiceModelOut` includes:
+
+- `resource_count`
+- `dependency_count` (services this model depends on)
+- `dependant_count` (services depending on this model)
+- `resources[]`
+- `dependencies[]`
+- `dependants[]`
+
 ### GET `/api/service-models/catalog/{service_id}`
 - Auth: authenticated user
 - Response: `ServiceModelOut`
 - Notes:
-  - includes `resources[]` and `dependencies[]` for the selected service model
+  - includes `resources[]`, `dependencies[]`, and `dependants[]` for the selected service model
 
 ### POST `/api/service-models/catalog`
 - Auth: authenticated user

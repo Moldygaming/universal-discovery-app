@@ -2349,6 +2349,7 @@ function renderServiceModelList() {
         <div>Active: ${String(Boolean(service.is_active))}</div>
         <div>Resources: ${Number(service.resource_count || 0)}</div>
         <div>Dependencies: ${Number(service.dependency_count || 0)}</div>
+        <div>Dependants: ${Number(service.dependant_count || 0)}</div>
         <div class="mini-actions">
           <button data-service-model-select-id="${service.id}" ${isSelected ? "disabled" : ""}>${isSelected ? "Selected" : "Open"}</button>
         </div>
@@ -2435,13 +2436,11 @@ function renderServiceDependenciesPanel(service) {
   }
 
   const dependencies = Array.isArray(service?.dependencies) ? service.dependencies : [];
-  if (!dependencies.length) {
-    serviceDependenciesPanel.innerHTML = '<div class="list-item">No dependencies defined.</div>';
-    return;
-  }
+  const dependants = Array.isArray(service?.dependants) ? service.dependants : [];
 
-  serviceDependenciesPanel.innerHTML = dependencies
-    .map((dependency) => `
+  const outgoingHtml = dependencies.length
+    ? dependencies
+        .map((dependency) => `
       <div class="list-item">
         <h4>${escapeHtml(dependency.depends_on_service_name)}</h4>
         <div>Relation: ${escapeHtml(dependency.relation)}</div>
@@ -2450,7 +2449,26 @@ function renderServiceDependenciesPanel(service) {
         </div>
       </div>
     `)
-    .join("");
+        .join("")
+    : '<div class="list-item">No direct dependencies defined.</div>';
+
+  const inboundHtml = dependants.length
+    ? dependants
+        .map((dependant) => `
+      <div class="list-item">
+        <h4>${escapeHtml(dependant.service_name)}</h4>
+        <div>Relation: ${escapeHtml(dependant.relation)}</div>
+      </div>
+    `)
+        .join("")
+    : '<div class="list-item">No services depend on this model.</div>';
+
+  serviceDependenciesPanel.innerHTML = `
+    <h4 class="small-head">Depends On</h4>
+    ${outgoingHtml}
+    <h4 class="small-head">Dependant Services</h4>
+    ${inboundHtml}
+  `;
 
   serviceDependenciesPanel.querySelectorAll("button[data-service-dependency-remove-id]").forEach((button) => {
     button.addEventListener("click", async () => {
