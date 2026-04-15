@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +71,8 @@ INTERNAL_AWS_SECRET_REF_PREFIX = "__internal_aws_"
 INTERNAL_AWS_INLINE_SECRET_REF_PREFIX = "__internal_aws_inline_"
 INTERNAL_GCP_SECRET_REF_PREFIX = "__internal_gcp_"
 INTERNAL_SSO_SECRET_REF_PREFIX = "__internal_sso_"
+
+logger = logging.getLogger(__name__)
 
 
 def _to_json(raw: str | None):
@@ -1848,8 +1852,25 @@ async def run_scan_profile_now(
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    run = await execute_and_persist_scan(db, profile, triggered_by=current_user.username)
-    return _run_out(run)
+    async def _run_in_background(profile_id: int, triggered_by: str | None) -> None:
+        run_db = SessionLocal()
+        try:
+            run_profile = run_db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+            if not run_profile:
+                return
+            await execute_and_persist_scan(run_db, run_profile, triggered_by=triggered_by)
+        except Exception:
+            logger.exception("Manual scan failed for profile_id=%s", profile_id)
+        finally:
+            run_db.close()
+
+    asyncio.create_task(_run_in_background(profile.id, current_user.username))
+    return {
+        "status": "queued",
+        "profile_id": profile.id,
+        "profile_name": profile.name,
+        "message": "Manual run queued",
+    }
 
 
 @app.get("/api/inventory/runs")

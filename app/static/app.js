@@ -2767,15 +2767,26 @@ async function refreshProfiles() {
   profilesPanel.querySelectorAll("button[data-run-id]").forEach((button) => {
     button.addEventListener("click", async () => {
       const id = button.dataset.runId;
+      const originalLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = "Running...";
+      logActivity(`Manual run requested for profile ${id}.`);
       try {
         const run = await apiFetch(`/api/admin/scan-profiles/${id}/run`, {
           method: "POST",
         });
-        logActivity(`Manual run started for profile ${id}. Result status: ${run.status}`);
-        await refreshRuns();
-        await refreshInventory();
+        const status = run?.status || "queued";
+        logActivity(`Manual run accepted for profile ${id}. Status: ${status}`);
       } catch (error) {
-        logActivity(String(error));
+        logActivity(`Manual run failed for profile ${id}: ${String(error)}`);
+      } finally {
+        await refreshRuns().catch((refreshError) => logActivity(`Failed to refresh runs: ${String(refreshError)}`));
+        await refreshInventory().catch((refreshError) => logActivity(`Failed to refresh inventory: ${String(refreshError)}`));
+        window.setTimeout(() => {
+          refreshRuns().catch((refreshError) => logActivity(`Failed to refresh runs: ${String(refreshError)}`));
+        }, 1500);
+        button.disabled = false;
+        button.textContent = originalLabel || "Run Now";
       }
     });
   });

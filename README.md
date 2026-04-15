@@ -43,6 +43,15 @@ Data persisted:
 
 ## Quick Start (Linux)
 
+Option A (automated installer):
+
+```bash
+chmod +x install_linux.sh
+./install_linux.sh
+```
+
+Option B (manual):
+
 1. Create and activate a virtual environment:
 
 ```bash
