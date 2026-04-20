@@ -159,9 +159,46 @@ const profileConfigKnownKeysByType = {
   icmp: ["target", "timeout_seconds", "concurrency", "max_hosts"],
   snmp: ["target", "community", "version", "oid", "port", "timeout_seconds", "concurrency", "max_hosts"],
   azure: ["tenant_config_id", "max_resources_per_subscription"],
-  aws: ["aws_account_id", "max_resources_per_region"],
+  aws: ["aws_account_id", "max_resources_per_region", "regions"],
   gcp: ["gcp_account_id", "max_resources_per_project"],
 };
+
+const AWS_REGION_OPTIONS = [
+  "af-south-1",
+  "ap-east-1",
+  "ap-east-2",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-northeast-3",
+  "ap-south-1",
+  "ap-south-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-3",
+  "ap-southeast-4",
+  "ap-southeast-5",
+  "ap-southeast-6",
+  "ap-southeast-7",
+  "ca-central-1",
+  "ca-west-1",
+  "eu-central-1",
+  "eu-central-2",
+  "eu-north-1",
+  "eu-south-1",
+  "eu-south-2",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "il-central-1",
+  "me-central-1",
+  "me-south-1",
+  "mx-central-1",
+  "sa-east-1",
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+];
 
 let accessToken = null;
 let currentUser = null;
@@ -215,6 +252,7 @@ function defaultProfileConfig(scanType) {
     return {
       aws_account_id: null,
       max_resources_per_region: 2000,
+      regions: null,
     };
   }
 
@@ -282,6 +320,17 @@ function numberOrDefault(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getMultiSelectValues(container, name) {
+  const select = container?.querySelector(`[name="${name}"]`);
+  if (!select || !(select instanceof HTMLSelectElement)) {
+    return [];
+  }
+
+  return Array.from(select.selectedOptions)
+    .map((option) => String(option.value || "").trim())
+    .filter(Boolean);
+}
+
 function buildProfileConfigFromQuickSettings(scanType) {
   if (!profileQuickSettings) {
     return defaultProfileConfig(scanType);
@@ -315,11 +364,15 @@ function buildProfileConfigFromQuickSettings(scanType) {
 
   if (scanType === "aws") {
     const awsAccountId = Number(getValue("aws_account_id"));
+    const selectedRegions = getMultiSelectValues(profileQuickSettings, "aws_regions");
     const config = {
       max_resources_per_region: numberOrDefault(getValue("aws_max_resources_per_region"), 2000),
     };
     if (Number.isInteger(awsAccountId) && awsAccountId > 0) {
       config.aws_account_id = awsAccountId;
+    }
+    if (selectedRegions.length) {
+      config.regions = selectedRegions;
     }
     return config;
   }
@@ -389,6 +442,13 @@ function renderProfileQuickSettings() {
         return `<option value="${account.id}" ${selected}>${escapeHtml(account.name)}</option>`;
       }),
     ].join("");
+    const selectedRegions = Array.isArray(config.regions)
+      ? new Set(config.regions.map((region) => String(region).trim()).filter(Boolean))
+      : new Set();
+    const regionOptions = AWS_REGION_OPTIONS.map((region) => {
+      const selected = selectedRegions.has(region) ? "selected" : "";
+      return `<option value="${region}" ${selected}>${region}</option>`;
+    }).join("");
 
     profileQuickSettings.innerHTML = `
       <p class="profile-quick-title">Cloud Settings (AWS)</p>
@@ -400,6 +460,12 @@ function renderProfileQuickSettings() {
           <input name="aws_max_resources_per_region" type="number" min="1" max="50000" value="${escapeHtml(config.max_resources_per_region ?? 2000)}" data-profile-setting />
         </label>
       </div>
+      <label>AWS Regions (optional)
+        <select name="aws_regions" multiple size="10" data-profile-setting>
+          ${regionOptions}
+        </select>
+      </label>
+      <p class="hint">Leave empty to scan all available regions.</p>
     `;
   } else if (scanType === "gcp") {
     const accountOptions = [

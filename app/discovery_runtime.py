@@ -26,6 +26,21 @@ def _json_dump(data: Any) -> str:
     return json.dumps(data, default=str)
 
 
+def _normalize_optional_string_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        parsed = [item.strip() for item in value.split(",") if item.strip()]
+        return parsed or None
+
+    if isinstance(value, (list, tuple, set)):
+        parsed = [str(item).strip() for item in value if str(item).strip()]
+        return parsed or None
+
+    return None
+
+
 def mask_sensitive_config(config: dict[str, Any]) -> dict[str, Any]:
     def _mask(key: str, value: Any) -> Any:
         if is_secret_ref(value):
@@ -116,7 +131,7 @@ async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str,
         access_key_id = cfg.get("access_key_id")
         secret_access_key = cfg.get("secret_access_key")
         session_token = cfg.get("session_token")
-        regions = cfg.get("regions")
+        regions = _normalize_optional_string_list(cfg.get("regions"))
         role_arn = cfg.get("role_arn")
         external_id = cfg.get("external_id")
         auth_mode = str(cfg.get("auth_mode") or "access_key")
@@ -141,7 +156,11 @@ async def run_profile_scan(db: Session, profile: ScanProfile) -> tuple[dict[str,
             if aws_account.session_token_ref_id and aws_account.session_token_ref is not None:
                 session_token = str(resolve_secrets(_json_load(aws_account.session_token_ref.reference_json)))
 
-            regions = _json_load(aws_account.regions_json) if aws_account.regions_json else None
+            account_regions = _normalize_optional_string_list(
+                _json_load(aws_account.regions_json) if aws_account.regions_json else None
+            )
+            if regions is None:
+                regions = account_regions
 
         if auth_mode == "assume_role":
             if not role_arn:
