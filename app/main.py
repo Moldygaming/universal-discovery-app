@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -1881,6 +1881,57 @@ async def list_runs(
 ):
     runs = db.query(ScanRun).order_by(desc(ScanRun.started_at)).limit(limit).all()
     return [_run_out(run) for run in runs]
+
+
+@app.get("/api/dashboard/overview")
+async def dashboard_overview(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    rows = (
+        db.query(InventoryItem.provider, InventoryItem.item_key, InventoryItem.item_type)
+        .order_by(InventoryItem.provider.asc(), InventoryItem.item_key.asc(), desc(InventoryItem.discovered_at))
+        .all()
+    )
+    unique_inventory: dict[tuple[str, str], str] = {}
+    for provider, item_key, item_type in rows:
+        dedupe_key = (provider, item_key)
+        if dedupe_key in unique_inventory:
+            continue
+        unique_inventory[dedupe_key] = item_type
+
+    inventory_by_provider: dict[str, int] = {}
+    inventory_by_item_type: dict[str, int] = {}
+    for (provider, _), item_type in unique_inventory.items():
+        inventory_by_provider[provider] = inventory_by_provider.get(provider, 0) + 1
+        inventory_by_item_type[item_type] = inventory_by_item_type.get(item_type, 0) + 1
+
+    scan_run_counts = {
+        status: count
+        for status, count in db.query(ScanRun.status, func.count(ScanRun.id)).group_by(ScanRun.status).all()
+    }
+
+    scan_profile_counts = {
+        scan_type: count
+        for scan_type, count in db.query(ScanProfile.scan_type, func.count(ScanProfile.id)).group_by(ScanProfile.scan_type).all()
+    }
+
+    total_service_models = db.query(func.count(ServiceModel.id)).scalar() or 0
+    active_service_models = db.query(func.count(ServiceModel.id)).filter(ServiceModel.is_active).scalar() or 0
+
+    return {
+        "total_inventory_items": len(unique_inventory),
+        "inventory_by_provider": inventory_by_provider,
+        "inventory_by_item_type": inventory_by_item_type,
+        "scan_run_counts": scan_run_counts,
+        "scan_profile_counts": scan_profile_counts,
+        "total_scan_profiles": sum(scan_profile_counts.values()),
+        "service_model_counts": {
+            "total": total_service_models,
+            "active": active_service_models,
+            "inactive": total_service_models - active_service_models,
+        },
+    }
 
 
 @app.get("/api/inventory/filter-options")

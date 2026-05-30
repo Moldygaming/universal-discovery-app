@@ -11,6 +11,13 @@ const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuDropdown = document.getElementById("menuDropdown");
 
 const runsPanel = document.getElementById("runsPanel");
+const dashboardTotalInventory = document.getElementById("dashboardTotalInventory");
+const dashboardTotalProfiles = document.getElementById("dashboardTotalProfiles");
+const dashboardActiveServices = document.getElementById("dashboardActiveServices");
+const dashboardInactiveServices = document.getElementById("dashboardInactiveServices");
+const dashboardInventoryByProviderChartCanvas = document.getElementById("dashboardInventoryByProviderChart");
+const dashboardInventoryByTypeChartCanvas = document.getElementById("dashboardInventoryByTypeChart");
+const dashboardScanRunsByStatusChartCanvas = document.getElementById("dashboardScanRunsByStatusChart");
 const inventoryPanel = document.getElementById("inventoryPanel");
 const inventoryTableHead = document.getElementById("inventoryTableHead");
 const inventoryTableBody = document.getElementById("inventoryTableBody");
@@ -207,6 +214,9 @@ let secretReferences = [];
 let azureTenants = [];
 let awsAccounts = [];
 let gcpAccounts = [];
+let dashboardInventoryByProviderChart = null;
+let dashboardInventoryByTypeChart = null;
+let dashboardScanRunsByStatusChart = null;
 let secretRefEditId = null;
 let azureTenantEditId = null;
 let awsAccountEditId = null;
@@ -692,6 +702,10 @@ function activateTab(tabName) {
 
   if (tabName === "scan-history") {
     refreshRuns().catch((error) => logActivity(String(error)));
+  }
+
+  if (tabName === "dashboard") {
+    refreshDashboard().catch((error) => logActivity(String(error)));
   }
 
   if (tabName === "service-models") {
@@ -2303,6 +2317,107 @@ function renderSecretPreview(targetPath, reference) {
 async function refreshRuns() {
   const runs = await apiFetch("/api/inventory/runs?limit=80");
   runsPanel.textContent = JSON.stringify(runs, null, 2);
+}
+
+function buildDashboardChart(chart, canvas, labels = [], data = [], label = "", type = "bar") {
+  if (!canvas || typeof Chart === "undefined") {
+    return null;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  if (chart) {
+    chart.destroy();
+  }
+
+  return new Chart(ctx, {
+    type,
+    data: {
+      labels,
+      datasets: [
+        {
+          label,
+          data,
+          backgroundColor: labels.map(() => "rgba(25, 93, 69, 0.55)"),
+          borderColor: labels.map(() => "rgba(25, 93, 69, 0.9)"),
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+      },
+      scales: {
+        x: {
+          ticks: {
+            maxRotation: 0,
+            autoSkip: true,
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderDashboardOverview(data) {
+  if (dashboardTotalInventory) {
+    dashboardTotalInventory.textContent = String(data.total_inventory_items ?? 0);
+  }
+  if (dashboardTotalProfiles) {
+    dashboardTotalProfiles.textContent = String(data.total_scan_profiles ?? 0);
+  }
+  if (dashboardActiveServices) {
+    dashboardActiveServices.textContent = String(data.service_model_counts?.active ?? 0);
+  }
+  if (dashboardInactiveServices) {
+    dashboardInactiveServices.textContent = String(data.service_model_counts?.inactive ?? 0);
+  }
+
+  const providerLabels = Object.keys(data.inventory_by_provider || {});
+  const providerValues = providerLabels.map((key) => data.inventory_by_provider[key] ?? 0);
+  dashboardInventoryByProviderChart = buildDashboardChart(
+    dashboardInventoryByProviderChart,
+    dashboardInventoryByProviderChartCanvas,
+    providerLabels,
+    providerValues,
+    "Resources by provider",
+    "bar",
+  );
+
+  const typeLabels = Object.keys(data.inventory_by_item_type || {});
+  const typeValues = typeLabels.map((key) => data.inventory_by_item_type[key] ?? 0);
+  dashboardInventoryByTypeChart = buildDashboardChart(
+    dashboardInventoryByTypeChart,
+    dashboardInventoryByTypeChartCanvas,
+    typeLabels,
+    typeValues,
+    "Resources by type",
+    "bar",
+  );
+
+  const runLabels = Object.keys(data.scan_run_counts || {});
+  const runValues = runLabels.map((key) => data.scan_run_counts[key] ?? 0);
+  dashboardScanRunsByStatusChart = buildDashboardChart(
+    dashboardScanRunsByStatusChart,
+    dashboardScanRunsByStatusChartCanvas,
+    runLabels,
+    runValues,
+    "Scan run status",
+    "doughnut",
+  );
+}
+
+async function refreshDashboard() {
+  const overview = await apiFetch("/api/dashboard/overview");
+  renderDashboardOverview(overview);
 }
 
 async function refreshInventoryFilterOptions() {

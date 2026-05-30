@@ -17,6 +17,17 @@
     <div class="bg-orb orb-b"></div>
 
     <main class="page">
+      <!-- Topbar with brand and quick actions -->
+      <div class="menu-shell topbar" role="banner">
+        <div class="brand">
+          <div class="logo" aria-hidden="true"></div>
+          <h2>Universal Discovery</h2>
+        </div>
+        <div class="topbar-actions">
+          <button id="menuToggleBtn" class="burger-btn" aria-label="Open menu" aria-expanded="false">☰</button>
+        </div>
+      </div>
+
       <header class="hero">
         <p class="eyebrow">Server Discovery Platform</p>
         <h1>Universal Discovery Server Console</h1>
@@ -69,19 +80,36 @@
       </section>
 
       <section id="appPanel" class="hidden">
-        <div class="menu-shell" data-reveal>
-          <button id="menuToggleBtn" class="burger-btn" aria-label="Open menu" aria-expanded="false">&#9776;</button>
-          <div id="menuDropdown" class="menu-dropdown hidden">
-            <button class="menu-item active" data-tab="inventory">Inventory</button>
-            <button class="menu-item" data-tab="scan-history">Scan History</button>
-            <button class="menu-item" data-tab="service-models">Service Models</button>
-            <button class="menu-item admin-only" data-tab="admin">Admin Console</button>
-            <a class="menu-link" href="/guide" target="_blank">User Guide</a>
-            <button id="logoutBtn" class="menu-item danger">Logout</button>
-          </div>
-        </div>
+        <!-- Desktop sidebar + content layout -->
+        <div class="app-layout" data-reveal>
+          <aside class="sidebar" aria-label="Main navigation">
+            <nav>
+              <button class="menu-item active" data-tab="inventory">Inventory</button>
+              <button class="menu-item" data-tab="dashboard">Dashboard</button>
+              <button class="menu-item" data-tab="scan-history">Scan History</button>
+              <button class="menu-item" data-tab="service-models">Service Models</button>
+              <button class="menu-item admin-only" data-tab="admin">Admin Console</button>
+              <a class="menu-link" href="/guide" target="_blank">User Guide</a>
+              <button id="logoutBtn" class="menu-item danger">Logout</button>
+            </nav>
+          </aside>
 
-        <section class="tab-view tab-view-wide" id="view-inventory">
+          <div class="app-content">
+            <!-- Mobile dropdown kept for small screens -->
+            <div class="menu-shell mobile" aria-hidden="true">
+              <button id="menuToggleBtnMobile" class="burger-btn" aria-label="Open menu" aria-expanded="false">&#9776;</button>
+              <div id="menuDropdown" class="menu-dropdown hidden">
+                <button class="menu-item active" data-tab="inventory">Inventory</button>
+                <button class="menu-item" data-tab="dashboard">Dashboard</button>
+                <button class="menu-item" data-tab="scan-history">Scan History</button>
+                <button class="menu-item" data-tab="service-models">Service Models</button>
+                <button class="menu-item admin-only" data-tab="admin">Admin Console</button>
+                <a class="menu-link" href="/guide" target="_blank">User Guide</a>
+                <button id="logoutBtnMobile" class="menu-item danger">Logout</button>
+              </div>
+            </div>
+
+            <section class="tab-view tab-view-wide" id="view-inventory">
           <article class="card" data-reveal>
             <h2>Inventory Items</h2>
             <form id="inventoryFilterForm">
@@ -155,6 +183,45 @@
             <h2>Recent Scan Runs</h2>
             <button id="refreshRunsBtn">Refresh Runs</button>
             <pre id="runsPanel">No scan runs loaded.</pre>
+          </article>
+        </section>
+
+        <section class="tab-view tab-view-wide hidden" id="view-dashboard">
+          <article class="card" data-reveal>
+            <h2>BI Dashboard</h2>
+            <div class="dashboard-summary-grid">
+              <div class="dashboard-summary-card">
+                <h3>Total Inventory Resources</h3>
+                <p id="dashboardTotalInventory">—</p>
+              </div>
+              <div class="dashboard-summary-card">
+                <h3>Scan Profiles</h3>
+                <p id="dashboardTotalProfiles">—</p>
+              </div>
+              <div class="dashboard-summary-card">
+                <h3>Active Service Models</h3>
+                <p id="dashboardActiveServices">—</p>
+              </div>
+              <div class="dashboard-summary-card">
+                <h3>Inactive Service Models</h3>
+                <p id="dashboardInactiveServices">—</p>
+              </div>
+            </div>
+
+            <div class="dashboard-charts-grid">
+              <div class="card">
+                <h3>Inventory by Provider</h3>
+                <canvas id="dashboardInventoryByProviderChart"></canvas>
+              </div>
+              <div class="card">
+                <h3>Inventory by Type</h3>
+                <canvas id="dashboardInventoryByTypeChart"></canvas>
+              </div>
+              <div class="card">
+                <h3>Scan Run Status</h3>
+                <canvas id="dashboardScanRunsByStatusChart"></canvas>
+              </div>
+            </div>
           </article>
         </section>
 
@@ -759,6 +826,7 @@
       </div>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
